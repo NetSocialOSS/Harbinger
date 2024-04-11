@@ -3,18 +3,17 @@ package configuration
 import (
 	"os"
 
-	"netsocial/types"
+	"socialflux/types"
 )
 
 func getConfig() types.Config {
 	return types.Config{
-		ApiVersion: 5,
+		ApiVersion: 2,
 		Database: types.Database{
 			Url: os.Getenv("DATABASE_URL"),
 		},
 		Web: types.Web{
-			Port:      "8080",
-			ReturnUrl: "http://localhost:3000",
+			Port: "8080",
 		},
 	}
 }

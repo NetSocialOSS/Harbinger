@@ -4,16 +4,14 @@ import (
 	"log"
 	"os"
 
-	"netsocial/configuration"
-	"netsocial/database"
-	"netsocial/routes"
+	"socialflux/configuration"
+	"socialflux/database"
+	"socialflux/routes"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/joho/godotenv"
-	"github.com/ravener/discord-oauth2"
-	"golang.org/x/oauth2"
 )
 
 func main() {
@@ -27,7 +25,7 @@ func main() {
 		Prefork:       true,
 		CaseSensitive: true,
 		StrictRouting: true,
-		ServerHeader:  "NetSocial",
+		ServerHeader:  "SocialFlux",
 		AppName:       "A social media website.",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.Println("Error:", err)
@@ -64,18 +62,6 @@ func main() {
 		return c.Next()
 	})
 
-	// Middleware: OAuth2 Configuration
-	app.Use(func(c *fiber.Ctx) error {
-		c.Locals("authConfig", &oauth2.Config{
-			RedirectURL:  configuration.GetConfig().Client.Callback,
-			ClientID:     configuration.GetConfig().Client.Id,
-			ClientSecret: os.Getenv("CLIENT_SECRET"),
-			Scopes:       []string{discord.ScopeIdentify},
-			Endpoint:     discord.Endpoint,
-		})
-		return c.Next()
-	})
-
 	// Routes
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
@@ -89,11 +75,11 @@ func main() {
 		})
 	})
 
-	//Shared
-	app.Get("/auth/login", routes.Login)
-	app.Get("/auth/callback", routes.Callback)
-	app.Get("/auth/logout", routes.Logout)
-	app.Get("/auth/@me", routes.GetCurrentUser)
+	//Partner
+	app.Get("/partners/@all", routes.GetAllPartner)
+
+	//Users
+	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
