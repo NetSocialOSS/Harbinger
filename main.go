@@ -26,7 +26,7 @@ func main() {
 		CaseSensitive: true,
 		StrictRouting: true,
 		ServerHeader:  "SocialFlux",
-		AppName:       "A social media website.",
+		AppName:       "Share Your Post with the World at SocialFlux",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.Println("Error:", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -77,9 +77,11 @@ func main() {
 
 	//Partner
 	app.Get("/partners/@all", routes.GetAllPartner)
+	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
 
 	//Users
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)
+	app.Get("/user/:username", routes.GetUserByName)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port

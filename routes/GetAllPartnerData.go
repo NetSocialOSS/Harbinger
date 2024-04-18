@@ -19,7 +19,7 @@ func GetAllPartner(c *fiber.Ctx) error {
 		})
 	}
 
-	partnersCollection := db.Database("SocialFlux").Collection("partnerDB1")
+	partnersCollection := db.Database("SocialFlux").Collection("partners")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

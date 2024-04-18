@@ -1,13 +1,35 @@
 package types
 
+import "time"
+
 type Post struct {
-	Avatar string `json:"avatar"`
+	Avatar      string    `json:"avatar"`
+	Text        string    `json:"text"`
+	Like        int64     `json:"likes"`
+	DisplayName string    `json:"displayname"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
+type Reply struct {
+	Avatar      string    `json:"avatar"`
+	DisplayName string    `json:"displayname"`
+	Text        string    `json:"text"`
+	Likes       int64     `json:"likes"`
+	CreatedAt   time.Time `json:"createdAt"`
 }
 
 type User struct {
-	Email    string `json:"email"`
-	Username string `json:"username"`
-	Post     []Post `json:"post"`
+	Email       string    `json:"email"`
+	DisplayName string    `json:"displayname"`
+	UserName    string    `json:"username"`
+	Followers   int64     `json:"followers"`
+	Following   int64     `json:"following"`
+	Bio         string    `json:"bio"`
+	Banner      string    `json:"banner"`
+	CreatedAt   time.Time `json:"createdAt"`
+	Avatar      string    `json:"avatar"`
+	Post        []Post    `json:"posts"`
+	Reply       []Reply   `json:"replies"`
 }
 
 type BlogPost struct {

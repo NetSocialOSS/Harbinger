@@ -17,7 +17,7 @@ func RegistergedUserNum(c *fiber.Ctx) error {
 		})
 	}
 
-	userCollection := db.Database("Socialflux").Collection("usersDB1")
+	userCollection := db.Database("SocialFlux").Collection("users")
 
 	countOptions := options.Count()
 	totaluser, err := userCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
@@ -28,4 +28,25 @@ func RegistergedUserNum(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"total_registered_user": totaluser})
+}
+
+func TotalPartnersCount(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+
+	partnerCollection := db.Database("SocialFlux").Collection("partners")
+
+	countOptions := options.Count()
+	totalpartner, err := partnerCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error counting partners",
+		})
+	}
+
+	return c.JSON(fiber.Map{"total_partner": totalpartner})
 }

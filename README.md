@@ -1,10 +1,10 @@
 <h2 align='center'>
   <img src="https://cdn.topiclist.xyz/images/webp/socialflux.webp" height='100px' width='100px'/>
   <br> 
+  
+# Harbinger
 
-# API
-
-All the NetSocial Backend APIs are now rewritten from NodeJS to Go.
+Harbinger is the main API for NetSocial Backend. All the NetSocial Backend APIs are now rewritten from NodeJS to Go.
 
 ## Requirements
 Make sure your Go ver is above 18.4
