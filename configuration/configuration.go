@@ -13,7 +13,7 @@ func getConfig() types.Config {
 			Url: os.Getenv("DATABASE_URL"),
 		},
 		Web: types.Web{
-			Port: "8080",
+			Port: "7070",
 		},
 	}
 }
