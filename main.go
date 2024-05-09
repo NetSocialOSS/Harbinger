@@ -69,8 +69,8 @@ func main() {
 			"version": "2.0.0",
 			"author":  "Ranveer Soni",
 			"links": fiber.Map{
-				"status": "https://status.netsocial.us",
-				"docs":   "https://docs.netsocial.us/",
+				"status": "https://status.netsocial.co.in",
+				"docs":   "https://docs.netsocial.co.in/",
 			},
 		})
 	})
