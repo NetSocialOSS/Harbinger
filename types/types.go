@@ -33,19 +33,19 @@ type User struct {
 }
 
 type BlogPost struct {
-	Slug        string          `json:"slug"`
-	Title       string          `json:"title"`
-	Date        string          `json:"date"`
-	Author      string          `json:"author"`
-	IsCoAuthor  bool            `json:"isCoAuthor"`
-	Excerpt     string          `json:"excerpt"`
-	Avatar      string          `json:"avatar"`
-	Description string          `json:"description,omitempty"`
-	CoWriter    bool            `json:"cowriter,omitempty"`
-	Content     []BlogPostEntry `json:"content"`
+	Slug        string      `json:"slug"`
+	Title       string      `json:"title"`
+	Date        string      `json:"date"`
+	Author      string      `json:"author"`
+	IsCoAuthor  bool        `json:"isCoAuthor"`
+	Excerpt     string      `json:"excerpt"`
+	Avatar      string      `json:"avatar"`
+	Description string      `json:"description,omitempty"`
+	CoWriter    bool        `json:"cowriter,omitempty"`
+	Content     []PostEntry `json:"content"`
 }
 
-type BlogPostEntry struct {
+type PostEntry struct {
 	Heading string `json:"heading"`
 	Body    string `json:"body"`
 }

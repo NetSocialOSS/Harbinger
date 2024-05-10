@@ -83,6 +83,9 @@ func main() {
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 	app.Get("/user/:username", routes.GetUserByName)
 
+	//Blogs
+	app.Get("/posts/@all", routes.GetPosts)
+
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
 	log.Fatal(app.Listen(":" + port))
