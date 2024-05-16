@@ -8,8 +8,11 @@ require (
 	go.mongodb.org/mongo-driver v1.15.0
 )
 
+require github.com/fatih/structs v1.1.0 // indirect
+
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
+	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/uuid v1.6.0 // indirect

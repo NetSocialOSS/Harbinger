@@ -21,7 +21,7 @@ func GetPosts(c *fiber.Ctx) error {
 		})
 	}
 
-	servCollection := db.Database("SocialFlux").Collection("posts")
+	servCollection := db.Database("SocialFlux").Collection("blogposts")
 
 	// Fetch all documents from the collection
 	var servers []types.BlogPost

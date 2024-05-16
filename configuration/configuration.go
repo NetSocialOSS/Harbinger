@@ -13,7 +13,8 @@ func getConfig() types.Config {
 			Url: os.Getenv("DATABASE_URL"),
 		},
 		Web: types.Web{
-			Port: "8080",
+			Port:           "8080",
+			ImageUploadKey: "d6b358da96fd1e63b3eadc17fbae7bdb",
 		},
 	}
 }

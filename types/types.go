@@ -1,35 +1,47 @@
 package types
 
-import "time"
+import (
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
+)
 
 type Post struct {
-	Avatar      string    `json:"avatar"`
-	Text        string    `json:"text"`
-	Like        int64     `json:"likes"`
-	DisplayName string    `json:"displayname"`
-	CreatedAt   time.Time `json:"createdAt"`
+	ID        string             `bson:"_id" json:"_id"`
+	Title     string             `bson:"title" json:"title"`
+	Content   string             `bson:"content" json:"content"`
+	Author    primitive.ObjectID `bson:"author" json:"author"`
+	ImageURL  string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
+	Hearts    []string           `bson:"hearts" json:"hearts"`
+	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
+	Comments  []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
 }
 
-type Reply struct {
-	Avatar      string    `json:"avatar"`
-	DisplayName string    `json:"displayname"`
-	Text        string    `json:"text"`
-	Likes       int64     `json:"likes"`
-	CreatedAt   time.Time `json:"createdAt"`
+type Author struct {
+	ID        primitive.ObjectID `bson:"_id" json:"_id"`
+	Bio       string             `bson:"bio" json:"bio"`
+	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
+	Username  string             `bson:"username" json:"username"`
+}
+
+type Comment struct {
+	ID      primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	Content string             `bson:"content" json:"content"`
+	Author  primitive.ObjectID `bson:"author" json:"author"`
+	Replies []Comment          `bson:"replies" json:"replies"`
 }
 
 type User struct {
-	Email       string    `json:"email"`
-	DisplayName string    `json:"displayname"`
-	UserName    string    `json:"username"`
-	Followers   int64     `json:"followers"`
-	Following   int64     `json:"following"`
-	Bio         string    `json:"bio"`
-	Banner      string    `json:"banner"`
-	CreatedAt   time.Time `json:"createdAt"`
-	Avatar      string    `json:"avatar"`
-	Post        []Post    `json:"posts"`
-	Reply       []Reply   `json:"replies"`
+	ID             primitive.ObjectID `json:"_id"`
+	Username       string             `json:"username"`
+	UserID         int                `bson:"userid" json:"userid"`
+	Email          string             `bson:"email" json:"email"`
+	Password       string             `bson:"password" json:"password"`
+	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
+	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
+	ProfileBanner  string             `bson:"profileBanner" json:"profileBanner"`
+	Bio            string             `bson:"bio" json:"bio"`
+	Verified       bool               `bson:"verified" json:"verified"`
 }
 
 type BlogPost struct {
@@ -58,6 +70,36 @@ type Partner struct {
 	Link   string `json:"link,omitempty" bson:"link,omitempty"`
 }
 
+type ImgbbImage struct {
+	Filename  string `json:"filename"`
+	Name      string `json:"name"`
+	Mime      string `json:"mime"`
+	Extension string `json:"extension"`
+	Url       string `json:"url"`
+}
+
+type ImgbbResponse struct {
+	Data    ImgbbResponseData `json:"data"`
+	Success bool              `json:"success"`
+	Status  int               `json:"status"`
+}
+
+type ImgbbResponseData struct {
+	ID string `json:"id"`
+
+	DisplayURL string `json:"display_url"`
+	DeleteURL  string `json:"delete_url"`
+
+	Expiration string `json:"expiration"`
+
+	Height string `json:"height"`
+	Width  string `json:"width"`
+
+	Image  ImgbbImage `json:"image"`
+	Thumb  ImgbbImage `json:"thumb"`
+	Medium ImgbbImage `json:"medium"`
+}
+
 /*
  * ==========================
  * Configuration Types: not suggested to mess with!!
@@ -76,5 +118,6 @@ type Database struct {
 }
 
 type Web struct {
-	Port string `json:"port"`
+	Port           string `json:"port"`
+	ImageUploadKey string `json:"ImageUploadKey"`
 }

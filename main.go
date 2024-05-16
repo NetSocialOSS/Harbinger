@@ -37,10 +37,10 @@ func main() {
 
 	// Middleware: CORS
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "*",
+		AllowOrigins:     "http://localhost:3000,https://socialflux.xyz,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app", // Allow requests from your frontend origin
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders:     "Content-Type, Origin, X-Requested-With, Accept,x-client-key, x-client-token, x-client-secret, authorization",
-		AllowCredentials: false,
+		AllowCredentials: true, // Allow credentials (cookies, authorization headers, etc.)
 	}))
 
 	// Middleware: Database Connection
@@ -69,22 +69,28 @@ func main() {
 			"version": "2.0.0",
 			"author":  "Ranveer Soni",
 			"links": fiber.Map{
-				"status": "https://status.netsocial.co.in",
-				"docs":   "https://docs.netsocial.co.in/",
+				"status": "https://status.netsocial.app",
+				"docs":   "https://docs.netsocial.app/",
 			},
 		})
 	})
 
 	//Partner
-	app.Get("/partners/@all", routes.GetAllPartner)
 	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
 
 	//Users
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 	app.Get("/user/:username", routes.GetUserByName)
+	app.Get("/profile/:userId/image", routes.ProfilePictureHandler)
+	app.Get("/profile/:userId/banner", routes.ProfileBannerHandler)
 
-	//Blogs
-	app.Get("/posts/@all", routes.GetPosts)
+	//Post
+	app.Get("/posts/@all", routes.GetAllPosts)
+	app.Get("/posts/:id", routes.GetPostById)
+
+	//MISC
+	app.Get("/blog/posts/@all", routes.GetPosts)
+	app.Get("/partners/@all", routes.GetAllPartner)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
