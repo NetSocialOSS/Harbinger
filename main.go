@@ -75,8 +75,11 @@ func main() {
 		})
 	})
 
-	//Partner
+	//Count
 	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
+
+	//Authentication
+	routes.RegisterAuthRoutes(app)
 
 	//Users
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)

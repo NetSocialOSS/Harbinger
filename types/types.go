@@ -36,12 +36,12 @@ type User struct {
 	Username       string             `json:"username"`
 	UserID         int                `bson:"userid" json:"userid"`
 	Email          string             `bson:"email" json:"email"`
-	Password       string             `bson:"password" json:"password"`
 	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
 	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
 	ProfileBanner  string             `bson:"profileBanner" json:"profileBanner"`
 	Bio            string             `bson:"bio" json:"bio"`
 	Verified       bool               `bson:"verified" json:"verified"`
+	Password       string             `bson:"password,omitempty" json:"-"`
 }
 
 type BlogPost struct {
