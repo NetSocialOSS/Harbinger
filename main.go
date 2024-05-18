@@ -37,10 +37,10 @@ func main() {
 
 	// Middleware: CORS
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,https://socialflux.xyz,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app", // Allow requests from your frontend origin
+		AllowOrigins:     "http://localhost:3000,https://socialflux.xyz,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
 		AllowHeaders:     "Content-Type, Origin, X-Requested-With, Accept,x-client-key, x-client-token, x-client-secret, authorization",
-		AllowCredentials: true, // Allow credentials (cookies, authorization headers, etc.)
+		AllowCredentials: true,
 	}))
 
 	// Middleware: Database Connection

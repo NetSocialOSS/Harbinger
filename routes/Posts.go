@@ -27,7 +27,7 @@ func GetPostById(c *fiber.Ctx) error {
 	}
 
 	// Access MongoDB collection for posts
-	postsCollection := db.Database("test").Collection("posts")
+	postsCollection := db.Database("SocialFlux").Collection("posts")
 
 	// Define options to customize the query
 	opts := options.FindOne().SetProjection(bson.M{
@@ -54,7 +54,7 @@ func GetPostById(c *fiber.Ctx) error {
 	}
 
 	// Fetch author details from the users collection
-	usersCollection := db.Database("test").Collection("users")
+	usersCollection := db.Database("SocialFlux").Collection("users")
 	var author types.Author
 	if err := usersCollection.FindOne(context.Background(), bson.M{"_id": post.Author}).Decode(&author); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

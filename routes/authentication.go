@@ -140,6 +140,7 @@ func UserLogin(c *fiber.Ctx) error {
 		Value:    token,
 		HTTPOnly: true,
 		Secure:   true,
+		SameSite: "None", // Allow cross-site cookies
 	})
 
 	return c.JSON(fiber.Map{"message": "Logged in successfully"})
@@ -152,6 +153,7 @@ func UserLogout(c *fiber.Ctx) error {
 		Expires:  time.Now().Add(-time.Hour),
 		HTTPOnly: true,
 		Secure:   true,
+		SameSite: "None",
 	})
 
 	return c.JSON(fiber.Map{"message": "Logged out successfully"})

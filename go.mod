@@ -9,7 +9,7 @@ require (
 	go.mongodb.org/mongo-driver v1.15.0
 )
 
-require github.com/dgrijalva/jwt-go v3.2.0+incompatible // indirect
+require github.com/dgrijalva/jwt-go v3.2.0+incompatible // direct
 
 require (
 	github.com/andybalholm/brotli v1.1.0 // indirect

@@ -47,8 +47,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 		})
 	}
 
-	postsCollection := db.Database("test").Collection("posts")
-	usersCollection := db.Database("test").Collection("users")
+	postsCollection := db.Database("SocialFlux").Collection("posts")
+	usersCollection := db.Database("SocialFlux").Collection("users")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -33,7 +33,7 @@ func ProfilePictureHandler(c *fiber.Ctx) error {
 	}
 
 	// Access the users collection
-	usersCollection := db.Database("test").Collection("users")
+	usersCollection := db.Database("SocialFlux").Collection("users")
 
 	// Define a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -91,7 +91,7 @@ func ProfileBannerHandler(c *fiber.Ctx) error {
 	}
 
 	// Access the users collection
-	usersCollection := db.Database("test").Collection("users")
+	usersCollection := db.Database("SocialFlux").Collection("users")
 
 	// Define a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
