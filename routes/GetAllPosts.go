@@ -13,16 +13,17 @@ import (
 
 // Define Post structure
 type Post struct {
-	ID         string             `bson:"_id" json:"_id"`
-	Title      string             `bson:"title" json:"title"`
-	Content    string             `bson:"content" json:"content"`
-	AuthorName string             `bson:"authorName" json:"authorName"`
-	Author     primitive.ObjectID `bson:"author" json:"author"`
-	ImageURL   string             `bson:"imageUrl" json:"imageUrl"`
-	Hearts     []string           `bson:"hearts" json:"hearts"`
-	CreatedAt  time.Time          `bson:"createdAt" json:"createdAt"`
-	Comments   []Comment          `bson:"comments" json:"comments"`
-	TimeAgo    string             `bson:"timeAgo" json:"timeAgo"`
+	ID            string             `bson:"_id" json:"_id"`
+	Title         string             `bson:"title" json:"title"`
+	Content       string             `bson:"content" json:"content"`
+	AuthorName    string             `bson:"authorName" json:"authorName"`
+	Author        primitive.ObjectID `bson:"author" json:"author"`
+	ImageURL      string             `bson:"imageUrl" json:"imageUrl"`
+	Hearts        []string           `bson:"hearts" json:"hearts"`
+	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	Comments      []Comment          `bson:"comments" json:"comments"`
+	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
+	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
 }
 
 // Define Comment structure
@@ -78,6 +79,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
+
+		// Calculate number of comments
+		posts[i].CommentNumber = len(post.Comments)
 	}
 
 	return c.JSON(posts)
