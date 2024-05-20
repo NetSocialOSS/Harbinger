@@ -18,10 +18,11 @@ type Post struct {
 }
 
 type Author struct {
-	ID        primitive.ObjectID `bson:"_id" json:"_id"`
-	Bio       string             `bson:"bio" json:"bio"`
-	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
-	Username  string             `bson:"username" json:"username"`
+	ID         primitive.ObjectID `bson:"_id" json:"_id"`
+	Bio        string             `bson:"bio" json:"bio"`
+	IsVerified bool               `json:"isVerified"`
+	CreatedAt  time.Time          `bson:"createdAt" json:"createdAt"`
+	Username   string             `bson:"username" json:"username"`
 }
 
 type Comment struct {
@@ -40,7 +41,7 @@ type User struct {
 	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
 	ProfileBanner  string             `bson:"profileBanner" json:"profileBanner"`
 	Bio            string             `bson:"bio" json:"bio"`
-	Verified       bool               `bson:"verified" json:"verified"`
+	IsVerified     bool               `json:"isVerified"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 }
 

@@ -23,6 +23,7 @@ type Post struct {
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
 	Comments      []Comment          `bson:"comments" json:"comments"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
+	IsVerified    bool               `bson:"isVerified" json:"isVerified"`
 	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
 }
 
@@ -36,8 +37,9 @@ type Comment struct {
 
 // Define Author structure
 type Author struct {
-	ID       primitive.ObjectID `bson:"_id" json:"_id"`
-	Username string             `bson:"username" json:"username"`
+	ID         primitive.ObjectID `bson:"_id" json:"_id"`
+	IsVerified bool               `json:"isVerified"`
+	Username   string             `bson:"username" json:"username"`
 }
 
 func GetAllPosts(c *fiber.Ctx) error {
@@ -76,6 +78,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 		}
 		posts[i].Author = author.ID
 		posts[i].AuthorName = author.Username // Populate AuthorName with author's username
+		posts[i].IsVerified = author.IsVerified
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
