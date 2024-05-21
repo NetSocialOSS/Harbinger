@@ -26,10 +26,11 @@ type Author struct {
 }
 
 type Comment struct {
-	ID      primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
-	Content string             `bson:"content" json:"content"`
-	Author  primitive.ObjectID `bson:"author" json:"author"`
-	Replies []Comment          `bson:"replies" json:"replies"`
+	ID         primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	Content    string             `bson:"content" json:"content"`
+	Author     primitive.ObjectID `bson:"author" json:"author"`
+	IsVerified bool               `json:"isVerified"`
+	Replies    []Comment          `bson:"replies" json:"replies"`
 }
 
 type User struct {
