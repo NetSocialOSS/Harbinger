@@ -12,6 +12,7 @@ type Post struct {
 	Content   string             `bson:"content" json:"content"`
 	Author    primitive.ObjectID `bson:"author" json:"author"`
 	ImageURL  string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
+	Image     string             `bson:"image,omitempty" json:"image,omitempty"`
 	Hearts    []string           `bson:"hearts" json:"hearts"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
 	Comments  []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
