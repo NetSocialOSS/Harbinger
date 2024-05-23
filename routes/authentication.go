@@ -140,7 +140,7 @@ func UserLogin(c *fiber.Ctx) error {
 		Value:    token,
 		HTTPOnly: true,
 		Secure:   true,
-		SameSite: "None", // Allow cross-site cookies
+		SameSite: "None",
 	})
 
 	return c.JSON(fiber.Map{"message": "Logged in successfully"})
@@ -165,6 +165,7 @@ func CurrentUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 	userCollection := db.Database("SocialFlux").Collection("users")
+	postCollection := db.Database("SocialFlux").Collection("posts")
 
 	userID := c.Locals("user_id").(int)
 
@@ -174,13 +175,24 @@ func CurrentUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to find user"})
 	}
 
+	// Fetch posts made by the user
+	var posts []types.Post
+	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
+	}
+
+	if err = cursor.All(context.TODO(), &posts); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to decode posts"})
+	}
+
 	return c.JSON(fiber.Map{
-		"username":       user.Username,
-		"email":          user.Email,
-		"bio":            user.Bio,
-		"_id":            user.ID.Hex(),
-		"profilePicture": user.ProfilePicture,
-		"profileBanner":  user.ProfileBanner,
+		"username":  user.Username,
+		"email":     user.Email,
+		"bio":       user.Bio,
+		"createdAt": user.CreatedAt,
+		"posts":     posts,
+		"_id":       user.ID.Hex(),
 	})
 }
 

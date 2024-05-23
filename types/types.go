@@ -36,6 +36,7 @@ type Comment struct {
 type User struct {
 	ID             primitive.ObjectID `json:"_id"`
 	Username       string             `json:"username"`
+	DisplayName    string             `json:"displayname"`
 	UserID         int                `bson:"userid" json:"userid"`
 	Email          string             `bson:"email" json:"email"`
 	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
