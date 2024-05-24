@@ -2,7 +2,8 @@ package routes
 
 import (
 	"context"
-	"os"
+	"crypto/rand"
+	"encoding/base64"
 	"socialflux/types"
 	"time"
 
@@ -14,7 +15,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
+var jwtSecret = generateRandomString(286)
+
+func generateRandomString(length int) string {
+	bytes := make([]byte, length)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		panic(err)
+	}
+	return base64.URLEncoding.EncodeToString(bytes)[:length]
+}
 
 func generateJWT(userID int) (string, error) {
 	claims := jwt.MapClaims{
@@ -22,7 +32,7 @@ func generateJWT(userID int) (string, error) {
 		"exp":     time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtSecret)
+	return token.SignedString([]byte(jwtSecret))
 }
 
 func authMiddleware(c *fiber.Ctx) error {
@@ -35,7 +45,7 @@ func authMiddleware(c *fiber.Ctx) error {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fiber.NewError(fiber.StatusUnauthorized, "Invalid token")
 		}
-		return jwtSecret, nil
+		return []byte(jwtSecret), nil
 	})
 
 	if err != nil || !token.Valid {
