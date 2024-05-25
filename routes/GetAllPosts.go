@@ -67,17 +67,18 @@ func GetAllPosts(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Fetch authors' IDs and usernames
 	for i, post := range posts {
 		var author Author
 		err := usersCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
-			// Handle error (e.g., username not found)
-			posts[i].Author = primitive.ObjectID{} // Set to zero value if author not found
+			// Handle error (author not found)
+			posts[i].Author = primitive.NilObjectID // or some default value
+			posts[i].AuthorName = ""                // or set to default if necessary
+			posts[i].IsVerified = false             // or set to default if necessary
 			continue
 		}
-		posts[i].Author = author.ID
-		posts[i].AuthorName = author.Username // Populate AuthorName with author's username
+
+		posts[i].AuthorName = author.Username
 		posts[i].IsVerified = author.IsVerified
 
 		// Calculate time ago

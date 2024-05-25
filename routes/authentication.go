@@ -192,18 +192,17 @@ func CurrentUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
 	}
 
-	if err = cursor.All(context.TODO(), &posts); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to decode posts"})
+	if err := cursor.All(context.TODO(), &posts); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
 	}
 
 	return c.JSON(fiber.Map{
-		"username":       user.Username,
-		"email":          user.Email,
-		"bio":            user.Bio,
-		"ProfilePicture": user.ProfilePicture,
-		"createdAt":      user.CreatedAt,
-		"posts":          posts,
-		"_id":            user.ID.Hex(),
+		"username":  user.Username,
+		"email":     user.Email,
+		"bio":       user.Bio,
+		"createdAt": user.CreatedAt,
+		"posts":     posts,
+		"_id":       user.ID.Hex(),
 	})
 }
 
