@@ -14,7 +14,6 @@ func getConfig() types.Config {
 		},
 		Web: types.Web{
 			Port:           "8080",
-			ImageUploadKey: "d6b358da96fd1e63b3eadc17fbae7bdb",
 		},
 	}
 }
