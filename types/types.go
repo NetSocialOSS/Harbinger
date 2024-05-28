@@ -66,6 +66,13 @@ type PostEntry struct {
 	Body    string `json:"body"`
 }
 
+type ServerStatus struct {
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url,omitempty"`
+}
+
 type Partner struct {
 	Banner string `json:"banner,omitempty" bson:"banner,omitempty"`
 	Logo   string `json:"logo,omitempty" bson:"logo,omitempty"`
