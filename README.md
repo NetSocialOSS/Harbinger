@@ -13,4 +13,4 @@ Setup the .env right to get the best results
 
 ## Contributors
 <a href="https://github.com/NetSocialOSS/API/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=NetSocialOSS/API" />
+  <img src="https://contrib.rocks/image?repo=NetSocialOSS/Harbinger" />
