@@ -94,7 +94,6 @@ func main() {
 	//MISC
 	app.Get("/blog/posts/@all", routes.GetPosts)
 	app.Get("/partners/@all", routes.GetAllPartner)
-	app.Get("/status", routes.GetStatusHandler)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
