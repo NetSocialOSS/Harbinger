@@ -79,10 +79,11 @@ func GetPostById(c *fiber.Ctx) error {
 		formattedComment := map[string]interface{}{
 			"content": comment.Content,
 			"author": map[string]interface{}{
-				"_id":        comment.Author.Hex(), // Convert ObjectID to its hexadecimal representation
-				"username":   author.Username,
-				"IsVerified": author.IsVerified,
-				"createdAt":  author.CreatedAt,
+				"_id":            comment.Author.Hex(), // Convert ObjectID to its hexadecimal representation
+				"username":       author.Username,
+				"IsVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"createdAt":      author.CreatedAt,
 			},
 			"_id":     comment.ID.Hex(), // Convert ObjectID to its hexadecimal representation
 			"replies": comment.Replies,

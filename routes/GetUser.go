@@ -48,13 +48,14 @@ func GetUserByName(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"username":    user.Username,
-		"isVerified":  user.IsVerified,
-		"email":       user.Email,
-		"displayname": user.DisplayName,
-		"bio":         user.Bio,
-		"createdAt":   user.CreatedAt,
-		"posts":       posts,
-		"_id":         user.ID.Hex(),
+		"username":       user.Username,
+		"isVerified":     user.IsVerified,
+		"isOrganisation": user.IsOrganisation,
+		"email":          user.Email,
+		"displayname":    user.DisplayName,
+		"bio":            user.Bio,
+		"createdAt":      user.CreatedAt,
+		"posts":          posts,
+		"_id":            user.ID.Hex(),
 	})
 }

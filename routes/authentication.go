@@ -94,8 +94,15 @@ func UserSignup(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
 	}
 
+	// Generate an ObjectID for _id
+	id := primitive.NewObjectID()
+
+	// Generate a userID (assuming it's an integer)
+	userID := generateUserID()
+
 	user := types.User{
-		ID:        primitive.NewObjectID(),
+		ID:        id,
+		UserID:    userID,
 		Username:  username,
 		Email:     email,
 		Password:  string(hashedPassword),
@@ -108,6 +115,12 @@ func UserSignup(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "User created successfully"})
+}
+
+// Example function to generate a unique userID (replace with your logic)
+func generateUserID() int {
+	// Implement your logic to generate a unique userID (e.g., from a database sequence or incrementing counter)
+	return 123 // Replace with your actual generation logic
 }
 
 func UserLogin(c *fiber.Ctx) error {
@@ -197,14 +210,15 @@ func CurrentUser(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"username":    user.Username,
-		"isVerified":  user.IsVerified,
-		"email":       user.Email,
-		"displayname": user.DisplayName,
-		"bio":         user.Bio,
-		"createdAt":   user.CreatedAt,
-		"posts":       posts,
-		"_id":         user.ID.Hex(),
+		"username":       user.Username,
+		"isVerified":     user.IsVerified,
+		"isOrganisation": user.IsOrganisation,
+		"email":          user.Email,
+		"displayname":    user.DisplayName,
+		"bio":            user.Bio,
+		"createdAt":      user.CreatedAt,
+		"posts":          posts,
+		"_id":            user.ID.Hex(),
 	})
 }
 

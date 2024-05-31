@@ -19,19 +19,21 @@ type Post struct {
 }
 
 type Author struct {
-	ID         primitive.ObjectID `bson:"_id" json:"_id"`
-	Bio        string             `bson:"bio" json:"bio"`
-	IsVerified bool               `json:"isVerified"`
-	CreatedAt  time.Time          `bson:"createdAt" json:"createdAt"`
-	Username   string             `bson:"username" json:"username"`
+	ID             primitive.ObjectID `bson:"_id" json:"_id"`
+	Bio            string             `bson:"bio" json:"bio"`
+	IsVerified     bool               `json:"isVerified"`
+	IsOrganisation bool               `json:"isOrganisation"`
+	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
+	Username       string             `bson:"username" json:"username"`
 }
 
 type Comment struct {
-	ID         primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
-	Content    string             `bson:"content" json:"content"`
-	Author     primitive.ObjectID `bson:"author" json:"author"`
-	IsVerified bool               `json:"isVerified"`
-	Replies    []Comment          `bson:"replies" json:"replies"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	Content        string             `bson:"content" json:"content"`
+	Author         primitive.ObjectID `bson:"author" json:"author"`
+	IsVerified     bool               `json:"isVerified"`
+	IsOrganisation bool               `json:"isOrganisation"`
+	Replies        []Comment          `bson:"replies" json:"replies"`
 }
 
 type User struct {
@@ -45,6 +47,7 @@ type User struct {
 	ProfileBanner  string             `bson:"profileBanner" json:"profileBanner"`
 	Bio            string             `bson:"bio" json:"bio"`
 	IsVerified     bool               `json:"isVerified"`
+	IsOrganisation bool               `json:"isOrganisation"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 }
 

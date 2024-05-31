@@ -13,18 +13,19 @@ import (
 
 // Define Post structure
 type Post struct {
-	ID            string             `bson:"_id" json:"_id"`
-	Title         string             `bson:"title" json:"title"`
-	Content       string             `bson:"content" json:"content"`
-	AuthorName    string             `bson:"authorName" json:"authorName"`
-	Author        primitive.ObjectID `bson:"author" json:"author"`
-	ImageURL      string             `bson:"imageUrl" json:"imageUrl"`
-	Hearts        []string           `bson:"hearts" json:"hearts"`
-	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
-	Comments      []Comment          `bson:"comments" json:"comments"`
-	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	IsVerified    bool               `bson:"isVerified" json:"isVerified"`
-	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
+	ID             string             `bson:"_id" json:"_id"`
+	Title          string             `bson:"title" json:"title"`
+	Content        string             `bson:"content" json:"content"`
+	AuthorName     string             `bson:"authorName" json:"authorName"`
+	Author         primitive.ObjectID `bson:"author" json:"author"`
+	ImageURL       string             `bson:"imageUrl" json:"imageUrl"`
+	Hearts         []string           `bson:"hearts" json:"hearts"`
+	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
+	Comments       []Comment          `bson:"comments" json:"comments"`
+	CommentNumber  int                `bson:"commentNumber" json:"commentNumber"`
+	IsVerified     bool               `bson:"isVerified" json:"isVerified"`
+	IsOrganisation bool               `json:"isOrganisation"`
+	TimeAgo        string             `bson:"timeAgo" json:"timeAgo"`
 }
 
 // Define Comment structure
@@ -37,9 +38,10 @@ type Comment struct {
 
 // Define Author structure
 type Author struct {
-	ID         primitive.ObjectID `bson:"_id" json:"_id"`
-	IsVerified bool               `json:"isVerified"`
-	Username   string             `bson:"username" json:"username"`
+	ID             primitive.ObjectID `bson:"_id" json:"_id"`
+	IsVerified     bool               `json:"isVerified"`
+	IsOrganisation bool               `json:"isOrganisation"`
+	Username       string             `bson:"username" json:"username"`
 }
 
 func GetAllPosts(c *fiber.Ctx) error {
@@ -75,11 +77,13 @@ func GetAllPosts(c *fiber.Ctx) error {
 			posts[i].Author = primitive.NilObjectID // or some default value
 			posts[i].AuthorName = ""                // or set to default if necessary
 			posts[i].IsVerified = false             // or set to default if necessary
+			posts[i].IsOrganisation = false
 			continue
 		}
 
 		posts[i].AuthorName = author.Username
 		posts[i].IsVerified = author.IsVerified
+		posts[i].IsOrganisation = author.IsOrganisation
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
