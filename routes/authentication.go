@@ -10,8 +10,8 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,8 +28,7 @@ func generateRandomString(length int) string {
 
 func generateJWT(userID int) (string, error) {
 	claims := jwt.MapClaims{
-		"user_id": userID,
-		"exp":     time.Now().Add(time.Hour * 72).Unix(),
+		"exp": time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtSecret))
@@ -94,33 +93,43 @@ func UserSignup(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
 	}
 
-	// Generate an ObjectID for _id
-	id := primitive.NewObjectID()
-
-	// Generate a userID (assuming it's an integer)
-	userID := generateUserID()
-
-	user := types.User{
-		ID:        id,
-		UserID:    userID,
-		Username:  username,
-		Email:     email,
-		Password:  string(hashedPassword),
-		CreatedAt: time.Now(),
+	// Find the highest userid and increment it
+	var lastUser types.User
+	err = userCollection.FindOne(context.TODO(), bson.M{}, options.FindOne().SetSort(bson.D{{"userid", -1}})).Decode(&lastUser)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve last user"})
 	}
 
-	_, err = userCollection.InsertOne(context.TODO(), user)
+	newUserID := lastUser.UserID + 1
+
+	user := types.User{
+		UserID:         newUserID,
+		Username:       username,
+		DisplayName:    username,
+		IsVerified:     false,
+		IsOrganisation: false,
+		Email:          email,
+		Password:       string(hashedPassword),
+		CreatedAt:      time.Now(),
+	}
+
+	// Insert the user and get the inserted ID
+	result, err := userCollection.InsertOne(context.TODO(), user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "User created successfully"})
-}
+	// Update the user document to set id = _id
+	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": result.InsertedID}, bson.M{
+		"$set": bson.M{"id": result.InsertedID},
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user id"})
+	}
 
-// Example function to generate a unique userID (replace with your logic)
-func generateUserID() int {
-	// Implement your logic to generate a unique userID (e.g., from a database sequence or incrementing counter)
-	return 123 // Replace with your actual generation logic
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "User created successfully",
+	})
 }
 
 func UserLogin(c *fiber.Ctx) error {
