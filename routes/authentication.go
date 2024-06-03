@@ -28,7 +28,8 @@ func generateRandomString(length int) string {
 
 func generateJWT(userID int) (string, error) {
 	claims := jwt.MapClaims{
-		"exp": time.Now().Add(time.Hour * 72).Unix(),
+		"user_id": userID,
+		"exp":     time.Now().Add(time.Hour * 72).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtSecret))
