@@ -90,6 +90,7 @@ func main() {
 	//Post
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
+	app.Get("/comment/add", routes.AddComment)
 
 	//MISC
 	app.Get("/blog/posts/@all", routes.GetPosts)
