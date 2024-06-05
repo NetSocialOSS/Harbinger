@@ -15,7 +15,7 @@ Use this section to inform users about the versions of the Go API currently supp
 
 ## Reporting a Vulnerability
 
-To report a security vulnerability, please us directly reach our development staff at our [Mail](bug@netsocial.app). We request that you do not publicly disclose the vulnerability until we have a chance to review it. In your report, please provide us with the following details:
+To report a security vulnerability, please us directly reach our development staff at our [Discord]https://discord.com/invite/DcUX2pMta4). We request that you do not publicly disclose the vulnerability until we have a chance to review it. In your report, please provide us with the following details:
 
 -   Description of the vulnerability
 -   Steps to reproduce the vulnerability
