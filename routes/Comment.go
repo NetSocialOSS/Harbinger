@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	"socialflux/types" // Adjust the import path as necessary
+	"socialflux/types"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
