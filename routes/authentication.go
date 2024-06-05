@@ -109,7 +109,11 @@ func UserSignup(c *fiber.Ctx) error {
 		DisplayName:    username,
 		IsVerified:     false,
 		IsOrganisation: false,
+		IsDeveloper:    false,
+		IsOwner:        false,
+		IsPartner:      false,
 		Email:          email,
+		Links:          []string{},
 		Password:       string(hashedPassword),
 		CreatedAt:      time.Now(),
 	}

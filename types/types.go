@@ -22,6 +22,9 @@ type Author struct {
 	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Bio            string             `bson:"bio" json:"bio"`
 	IsVerified     bool               `json:"isVerified"`
+	IsDeveloper    bool               `json:"isDeveloper"`
+	IsPartner      bool               `json:"isPartner"`
+	IsOwner        bool               `json:"isOwner"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
 	Username       string             `bson:"username" json:"username"`
@@ -33,6 +36,9 @@ type Comment struct {
 	Author         primitive.ObjectID `bson:"author" json:"author"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
+	IsPartner      bool               `json:"isPartner"`
+	IsOwner        bool               `json:"isOwner"`
+	IsDeveloper    bool               `json:"isDeveloper"`
 	Replies        []Comment          `bson:"replies" json:"replies"`
 }
 
@@ -48,7 +54,11 @@ type User struct {
 	Bio            string             `bson:"bio" json:"bio"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
+	IsDeveloper    bool               `json:"isDeveloper"`
+	IsPartner      bool               `json:"isPartner"`
+	IsOwner        bool               `json:"isOwner"`
 	Password       string             `bson:"password,omitempty" json:"-"`
+	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
 }
 
 type BlogPost struct {

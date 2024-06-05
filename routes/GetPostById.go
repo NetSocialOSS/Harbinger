@@ -83,6 +83,9 @@ func GetPostById(c *fiber.Ctx) error {
 				"username":       author.Username,
 				"IsVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
+				"isDeveloper":    author.IsDeveloper,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
 				"createdAt":      author.CreatedAt,
 			},
 			"_id":     comment.ID.Hex(), // Convert ObjectID to its hexadecimal representation

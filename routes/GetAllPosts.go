@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // Define Post structure
@@ -24,6 +25,9 @@ type Post struct {
 	Comments       []Comment          `bson:"comments" json:"comments"`
 	CommentNumber  int                `bson:"commentNumber" json:"commentNumber"`
 	IsVerified     bool               `bson:"isVerified" json:"isVerified"`
+	IsDeveloper    bool               `json:"isDeveloper"`
+	IsPartner      bool               `json:"isPartner"`
+	IsOwner        bool               `json:"isOwner"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	TimeAgo        string             `bson:"timeAgo" json:"timeAgo"`
 }
@@ -41,6 +45,9 @@ type Author struct {
 	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
+	IsDeveloper    bool               `json:"isDeveloper"`
+	IsPartner      bool               `json:"isPartner"`
+	IsOwner        bool               `json:"isOwner"`
 	Username       string             `bson:"username" json:"username"`
 }
 
@@ -58,7 +65,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cursor, err := postsCollection.Find(ctx, bson.M{})
+	// Sort by CreatedAt in descending order
+	findOptions := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
+	cursor, err := postsCollection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -77,6 +86,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 			posts[i].Author = primitive.NilObjectID // or some default value
 			posts[i].AuthorName = ""                // or set to default if necessary
 			posts[i].IsVerified = false             // or set to default if necessary
+			posts[i].IsDeveloper = false
+			posts[i].IsOwner = false
+			posts[i].IsPartner = false
 			posts[i].IsOrganisation = false
 			continue
 		}
@@ -84,6 +96,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 		posts[i].AuthorName = author.Username
 		posts[i].IsVerified = author.IsVerified
 		posts[i].IsOrganisation = author.IsOrganisation
+		posts[i].IsDeveloper = author.IsDeveloper
+		posts[i].IsOwner = author.IsOwner
+		posts[i].IsPartner = author.IsPartner
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
