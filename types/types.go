@@ -18,6 +18,17 @@ type Post struct {
 	Comments  []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
 }
 
+type NewPost struct {
+	ID        string             `json:"id,omitempty" bson:"_id,omitempty"`
+	Title     string             `json:"title"`
+	Content   string             `json:"content"`
+	Author    primitive.ObjectID `json:"author"`
+	Image     string             `json:"image,omitempty"`
+	Hearts    []string           `json:"hearts,omitempty"`
+	CreatedAt time.Time          `json:"createdAt"`
+	Comments  []string           `json:"comments,omitempty" bson:"comments,omitempty"`
+}
+
 type Author struct {
 	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Bio            string             `bson:"bio" json:"bio"`

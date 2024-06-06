@@ -8,12 +8,7 @@ require (
 	go.mongodb.org/mongo-driver v1.15.0
 )
 
-require (
-	github.com/DisgoOrg/disgohook v1.4.4 // indirect
-	github.com/DisgoOrg/log v1.1.0 // indirect
-	github.com/DisgoOrg/restclient v1.2.8 // indirect
-	github.com/gtuk/discordwebhook v1.2.0 // indirect
-)
+require github.com/gtuk/discordwebhook v1.2.0
 
 require github.com/dgrijalva/jwt-go v3.2.0+incompatible // direct
 

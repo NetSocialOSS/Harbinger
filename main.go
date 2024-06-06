@@ -22,11 +22,12 @@ func main() {
 
 	// Create Fiber app instance
 	app := fiber.New(fiber.Config{
-		Prefork:       true,
-		CaseSensitive: true,
-		StrictRouting: true,
-		ServerHeader:  "SocialFlux",
-		AppName:       "Share Your Post with the World at SocialFlux",
+		Prefork:        true,
+		CaseSensitive:  true,
+		StrictRouting:  true,
+		ReadBufferSize: 100000,
+		ServerHeader:   "SocialFlux",
+		AppName:        "Share Your Post with the World at SocialFlux",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.Println("Error:", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -91,6 +92,8 @@ func main() {
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
 	app.Post("/comment/add", routes.AddComment)
+	app.Post("/post/add", routes.AddPost)
+	app.Get("/posts/:postId/image", routes.PostImageHandler)
 
 	//MISC
 	app.Get("/blog/posts/@all", routes.GetPosts)
