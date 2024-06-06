@@ -5,13 +5,18 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
+	"fmt"
+	"log"
 	"net/http"
+	"os"
 	"socialflux/types"
 	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gtuk/discordwebhook"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -84,6 +89,7 @@ func FetchDisposableDomains() (map[string]bool, error) {
 	return disposableDomains, nil
 }
 
+// UserSignup handles user registration
 func UserSignup(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
@@ -112,6 +118,12 @@ func UserSignup(c *fiber.Ctx) error {
 
 	emailDomain := emailParts[1]
 	if _, exists := disposableDomains[emailDomain]; exists {
+		// Send detailed Discord webhook for disposable email domains
+		err = sendDiscordWebhookFailure(username, email)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send Discord webhook"})
+		}
+
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Disposable email domains are not allowed"})
 	}
 
@@ -171,9 +183,61 @@ func UserSignup(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user id"})
 	}
 
+	// Send Discord webhook for successful registration
+	err = sendDiscordWebhook(username)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send Discord webhook"})
+	}
+
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message": "User created successfully",
 	})
+}
+
+// sendDiscordWebhook sends a message to a Discord webhook
+func sendDiscordWebhook(username string) error {
+	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
+	if webhookURL == "" {
+		return errors.New("Discord webhook URL not set in environment variables")
+	}
+
+	content := "A new user has registered by the name: " + username
+	message := discordwebhook.Message{
+		Content: &content,
+	}
+
+	err := discordwebhook.SendMessage(webhookURL, message)
+	if err != nil {
+		log.Printf("Error sending Discord webhook: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// sendDiscordWebhookFailure sends a message to a Discord webhook for failed registration due to disposable email
+func sendDiscordWebhookFailure(username, email string) error {
+	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
+	if webhookURL == "" {
+		return errors.New("Discord webhook URL not set in environment variables")
+	}
+
+	// Create the message content with proper formatting
+	content := fmt.Sprintf("User registration failed for username: %s with email: %s (Disposable email domain)", username, email)
+
+	// Create a Discord webhook message object
+	message := discordwebhook.Message{
+		Content: &content,
+	}
+
+	// Send the message to the Discord webhook
+	err := discordwebhook.SendMessage(webhookURL, message)
+	if err != nil {
+		log.Printf("Error sending Discord webhook: %v", err)
+		return err
+	}
+
+	return nil
 }
 
 func UserLogin(c *fiber.Ctx) error {

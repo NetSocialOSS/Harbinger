@@ -54,7 +54,6 @@ func GetUserByName(c *fiber.Ctx) error {
 		"isDeveloper":    user.IsDeveloper,
 		"isOwner":        user.IsOwner,
 		"isPartner":      user.IsPartner,
-		"email":          user.Email,
 		"displayname":    user.DisplayName,
 		"bio":            user.Bio,
 		"createdAt":      user.CreatedAt,
