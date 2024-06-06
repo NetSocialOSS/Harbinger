@@ -1,10 +1,13 @@
 package routes
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"net/http"
 	"socialflux/types"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -29,7 +32,7 @@ func generateRandomString(length int) string {
 func generateJWT(userID int) (string, error) {
 	claims := jwt.MapClaims{
 		"user_id": userID,
-		"exp":     time.Now().Add(time.Hour * 72).Unix(),
+		"exp":     time.Now().Add(time.Hour * 7628).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString([]byte(jwtSecret))
@@ -61,6 +64,26 @@ func authMiddleware(c *fiber.Ctx) error {
 	return c.Next()
 }
 
+func FetchDisposableDomains() (map[string]bool, error) {
+	resp, err := http.Get("https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/master/disposable_email_blocklist.conf")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	disposableDomains := make(map[string]bool)
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		domain := scanner.Text()
+		disposableDomains[domain] = true
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+
+	return disposableDomains, nil
+}
+
 func UserSignup(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
@@ -74,6 +97,22 @@ func UserSignup(c *fiber.Ctx) error {
 
 	if username == "" || email == "" || password == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required fields"})
+	}
+
+	// Fetch and check disposable email domains
+	disposableDomains, err := FetchDisposableDomains()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch disposable email domains"})
+	}
+
+	emailParts := strings.Split(email, "@")
+	if len(emailParts) != 2 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid email format"})
+	}
+
+	emailDomain := emailParts[1]
+	if _, exists := disposableDomains[emailDomain]; exists {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Disposable email domains are not allowed"})
 	}
 
 	count, err := userCollection.CountDocuments(context.TODO(), bson.M{
@@ -202,7 +241,6 @@ func CurrentUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 	userCollection := db.Database("SocialFlux").Collection("users")
-	postCollection := db.Database("SocialFlux").Collection("posts")
 
 	userID := c.Locals("user_id").(int)
 
@@ -212,27 +250,13 @@ func CurrentUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to find user"})
 	}
 
-	// Fetch posts made by the user
-	var posts []types.Post
-	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID})
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
-	}
-
-	if err := cursor.All(context.TODO(), &posts); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
-	}
-
 	return c.JSON(fiber.Map{
-		"username":       user.Username,
-		"isVerified":     user.IsVerified,
-		"isOrganisation": user.IsOrganisation,
-		"email":          user.Email,
-		"displayname":    user.DisplayName,
-		"bio":            user.Bio,
-		"createdAt":      user.CreatedAt,
-		"posts":          posts,
-		"_id":            user.ID.Hex(),
+		"username":    user.Username,
+		"email":       user.Email,
+		"displayname": user.DisplayName,
+		"bio":         user.Bio,
+		"createdAt":   user.CreatedAt,
+		"_id":         user.ID.Hex(),
 	})
 }
 
