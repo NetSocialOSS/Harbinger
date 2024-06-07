@@ -59,6 +59,5 @@ func GetUserByName(c *fiber.Ctx) error {
 		"createdAt":      user.CreatedAt,
 		"links":          user.Links,
 		"posts":          posts,
-		"_id":            user.ID.Hex(),
 	})
 }

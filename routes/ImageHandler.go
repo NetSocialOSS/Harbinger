@@ -7,22 +7,13 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // ProfilePictureHandler handles requests to display a user's profile picture
 func ProfilePictureHandler(c *fiber.Ctx) error {
-	// Extract the user ID from the URL
-	userIDParam := c.Params("userId")
-
-	// Parse the user ID into an ObjectID
-	userID, err := primitive.ObjectIDFromHex(userIDParam)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID format",
-		})
-	}
+	// Extract the username from the URL
+	username := c.Params("userId")
 
 	// Retrieve the database client from Fiber context
 	db, ok := c.Locals("db").(*mongo.Client)
@@ -39,11 +30,11 @@ func ProfilePictureHandler(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Find the user by ID
+	// Find the user by username
 	var user struct {
 		ProfilePicture string `bson:"profilePicture"`
 	}
-	err = usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	err := usersCollection.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "User not found",
@@ -71,16 +62,8 @@ func ProfilePictureHandler(c *fiber.Ctx) error {
 
 // ProfileBannerHandler handles requests to display a user's profile banner
 func ProfileBannerHandler(c *fiber.Ctx) error {
-	// Extract the user ID from the URL
-	userIDParam := c.Params("userId")
-
-	// Parse the user ID into an ObjectID
-	userID, err := primitive.ObjectIDFromHex(userIDParam)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID format",
-		})
-	}
+	// Extract the username from the URL
+	username := c.Params("userId")
 
 	// Retrieve the database client from Fiber context
 	db, ok := c.Locals("db").(*mongo.Client)
@@ -97,11 +80,11 @@ func ProfileBannerHandler(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Find the user by ID
+	// Find the user by username
 	var user struct {
 		ProfileBanner string `bson:"profileBanner"`
 	}
-	err = usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	err := usersCollection.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "User not found",

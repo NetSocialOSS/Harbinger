@@ -62,48 +62,47 @@ func GetPostById(c *fiber.Ctx) error {
 		})
 	}
 
-	// Format the time ago
-	timeAgo := TimeAgo(post.CreatedAt)
-
-	// Format comments
-	var formattedComments []map[string]interface{}
+	// Fetch comments with author details from the users collection
+	var comments []types.Comment
 	for _, comment := range post.Comments {
-		// Fetch author details from the users collection
-		var author types.Author
-		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": comment.Author}).Decode(&author); err != nil {
+		var commentAuthor types.Author
+		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": comment.Author}).Decode(&commentAuthor); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": fmt.Sprintf("Failed to fetch author details: %v", err),
+				"error": fmt.Sprintf("Failed to fetch author details for comment: %v", err),
 			})
 		}
 
-		formattedComment := map[string]interface{}{
-			"content": comment.Content,
-			"author": map[string]interface{}{
-				"_id":            comment.Author.Hex(), // Convert ObjectID to its hexadecimal representation
-				"username":       author.Username,
-				"IsVerified":     author.IsVerified,
-				"isOrganisation": author.IsOrganisation,
-				"isDeveloper":    author.IsDeveloper,
-				"isPartner":      author.IsPartner,
-				"isOwner":        author.IsOwner,
-				"createdAt":      author.CreatedAt,
-			},
-			"_id":     comment.ID.Hex(), // Convert ObjectID to its hexadecimal representation
-			"replies": comment.Replies,
+		// Construct each comment with author's details
+		commentData := types.Comment{
+			ID:             comment.ID,
+			Content:        comment.Content,
+			IsVerified:     commentAuthor.IsVerified,
+			IsOrganisation: commentAuthor.IsOrganisation,
+			IsPartner:      commentAuthor.IsPartner,
+			IsOwner:        commentAuthor.IsOwner,
+			IsDeveloper:    commentAuthor.IsDeveloper,
+			Replies:        comment.Replies, // Assuming replies are already formatted correctly
 		}
-		formattedComments = append(formattedComments, formattedComment)
+		comments = append(comments, commentData)
 	}
 
 	// Construct the response data
 	responseData := map[string]interface{}{
-		"_id":       post.ID,
-		"title":     post.Title,
-		"content":   post.Content,
-		"author":    author,
+		"_id":     post.ID,
+		"title":   post.Title,
+		"content": post.Content,
+		"author": map[string]interface{}{
+			"username":       author.Username,
+			"isVerified":     author.IsVerified,
+			"isOrganisation": author.IsOrganisation,
+			"isDeveloper":    author.IsDeveloper,
+			"isPartner":      author.IsPartner,
+			"isOwner":        author.IsOwner,
+			"createdAt":      author.CreatedAt,
+		},
 		"createdAt": post.CreatedAt,
-		"timeAgo":   timeAgo,
 		"hearts":    post.Hearts,
-		"comments":  formattedComments,
+		"comments":  comments, // Use the updated comments data
 		"imageUrl":  post.ImageURL,
 	}
 

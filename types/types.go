@@ -30,15 +30,14 @@ type NewPost struct {
 }
 
 type Author struct {
-	ID             primitive.ObjectID `bson:"_id" json:"_id"`
-	Bio            string             `bson:"bio" json:"bio"`
-	IsVerified     bool               `json:"isVerified"`
-	IsDeveloper    bool               `json:"isDeveloper"`
-	IsPartner      bool               `json:"isPartner"`
-	IsOwner        bool               `json:"isOwner"`
-	IsOrganisation bool               `json:"isOrganisation"`
-	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
-	Username       string             `bson:"username" json:"username"`
+	Bio            string    `bson:"bio" json:"bio"`
+	IsVerified     bool      `json:"isVerified"`
+	IsDeveloper    bool      `json:"isDeveloper"`
+	IsPartner      bool      `json:"isPartner"`
+	IsOwner        bool      `json:"isOwner"`
+	IsOrganisation bool      `json:"isOrganisation"`
+	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
+	Username       string    `bson:"username" json:"username"`
 }
 
 type Comment struct {
