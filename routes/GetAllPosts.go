@@ -17,8 +17,8 @@ type Post struct {
 	ID             string             `bson:"_id" json:"_id"`
 	Title          string             `bson:"title" json:"title"`
 	Content        string             `bson:"content" json:"content"`
-	AuthorName     string             `bson:"authorName" json:"authorName"`
-	Author         primitive.ObjectID `bson:"author" json:"author"`
+	AuthorID       primitive.ObjectID `bson:"author" json:"-"`
+	Author         Author             `bson:"-" json:"author"`
 	ImageURL       string             `bson:"imageUrl" json:"imageUrl"`
 	Hearts         []string           `bson:"hearts" json:"hearts"`
 	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
@@ -34,15 +34,16 @@ type Post struct {
 
 // Define Comment structure
 type Comment struct {
-	Content string   `bson:"content" json:"content"`
-	Author  string   `bson:"author" json:"author"`
-	Replies []string `bson:"replies" json:"replies"`
-	ID      string   `bson:"_id" json:"_id"`
+	Content    string             `bson:"content" json:"content"`
+	Replies    []string           `bson:"replies" json:"replies"`
+	ID         string             `bson:"_id" json:"_id"`
+	Author     primitive.ObjectID `bson:"author" json:"-"`
+	AuthorName string             `bson:"-" json:"author"`
 }
 
 // Define Author structure
 type Author struct {
-	ID             primitive.ObjectID `bson:"_id" json:"_id"`
+	ID             primitive.ObjectID `bson:"_id,omitempty" json:"-"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsDeveloper    bool               `json:"isDeveloper"`
@@ -80,31 +81,38 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 	for i, post := range posts {
 		var author Author
-		err := usersCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+		err := usersCollection.FindOne(ctx, bson.M{"_id": post.AuthorID}).Decode(&author)
 		if err != nil {
 			// Handle error (author not found)
-			posts[i].Author = primitive.NilObjectID // or some default value
-			posts[i].AuthorName = ""                // or set to default if necessary
-			posts[i].IsVerified = false             // or set to default if necessary
-			posts[i].IsDeveloper = false
-			posts[i].IsOwner = false
-			posts[i].IsPartner = false
-			posts[i].IsOrganisation = false
+			posts[i].Author = Author{} // or set to default if necessary
 			continue
 		}
 
-		posts[i].AuthorName = author.Username
-		posts[i].IsVerified = author.IsVerified
-		posts[i].IsOrganisation = author.IsOrganisation
-		posts[i].IsDeveloper = author.IsDeveloper
-		posts[i].IsOwner = author.IsOwner
-		posts[i].IsPartner = author.IsPartner
+		posts[i].Author.ID = post.AuthorID
+		posts[i].Author.Username = author.Username
+		posts[i].Author.IsVerified = author.IsVerified
+		posts[i].Author.IsOrganisation = author.IsOrganisation
+		posts[i].Author.IsDeveloper = author.IsDeveloper
+		posts[i].Author.IsOwner = author.IsOwner
+		posts[i].Author.IsPartner = author.IsPartner
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
 
 		// Calculate number of comments
 		posts[i].CommentNumber = len(post.Comments)
+
+		// Update comments with author usernames
+		for j, comment := range posts[i].Comments {
+			var commenter Author
+			err := usersCollection.FindOne(ctx, bson.M{"_id": comment.Author}).Decode(&commenter)
+			if err != nil {
+				// Handle error (commenter not found)
+				posts[i].Comments[j].AuthorName = "" // or handle as needed
+				continue
+			}
+			posts[i].Comments[j].AuthorName = commenter.Username
+		}
 	}
 
 	return c.JSON(posts)

@@ -10,7 +10,7 @@ type Post struct {
 	ID        string             `bson:"_id" json:"_id"`
 	Title     string             `bson:"title" json:"title"`
 	Content   string             `bson:"content" json:"content"`
-	Author    primitive.ObjectID `bson:"author" json:"author"`
+	Author    primitive.ObjectID `bson:"author" json:"-"`
 	ImageURL  string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
 	Image     string             `bson:"image,omitempty" json:"image,omitempty"`
 	Hearts    []string           `bson:"hearts" json:"hearts"`

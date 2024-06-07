@@ -50,3 +50,24 @@ func TotalPartnersCount(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"total_partner": totalpartner})
 }
+
+func TotalPostsCount(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+
+	partnerCollection := db.Database("SocialFlux").Collection("posts")
+
+	countOptions := options.Count()
+	totalpartner, err := partnerCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error counting posts",
+		})
+	}
+
+	return c.JSON(fiber.Map{"total_posts": totalpartner})
+}

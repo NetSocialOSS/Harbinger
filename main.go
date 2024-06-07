@@ -94,6 +94,7 @@ func main() {
 	app.Post("/comment/add", routes.AddComment)
 	app.Post("/post/add", routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
+	app.Get("/stats/posts/@all", routes.TotalPostsCount)
 
 	//MISC
 	app.Get("/blog/posts/@all", routes.GetPosts)

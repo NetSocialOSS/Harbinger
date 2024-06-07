@@ -35,16 +35,24 @@ func GetUserByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding user data"})
 	}
 
-	postCollection := db.Database("SocialFlux").Collection("posts")
-	// Fetch posts made by the user
+	// Fetch posts made by the user without comments
 	var posts []types.Post
+	postCollection := db.Database("SocialFlux").Collection("posts")
 	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
 	}
 
-	if err := cursor.All(context.TODO(), &posts); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
+	for cursor.Next(context.TODO()) {
+		var post types.Post
+		err := cursor.Decode(&post)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
+		}
+
+		// Exclude comments from the post
+		post.Comments = nil
+		posts = append(posts, post)
 	}
 
 	return c.JSON(fiber.Map{
