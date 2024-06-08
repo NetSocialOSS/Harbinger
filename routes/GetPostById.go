@@ -81,16 +81,18 @@ func GetPostById(c *fiber.Ctx) error {
 			IsPartner:      commentAuthor.IsPartner,
 			IsOwner:        commentAuthor.IsOwner,
 			IsDeveloper:    commentAuthor.IsDeveloper,
-			Replies:        comment.Replies, // Assuming replies are already formatted correctly
+			AuthorName:     commentAuthor.Username,
+			Replies:        comment.Replies,
 		}
 		comments = append(comments, commentData)
 	}
 
 	// Construct the response data
 	responseData := map[string]interface{}{
-		"_id":     post.ID,
-		"title":   post.Title,
-		"content": post.Content,
+		"_id":        post.ID,
+		"title":      post.Title,
+		"content":    post.Content,
+		"authorName": author.Username,
 		"author": map[string]interface{}{
 			"username":       author.Username,
 			"isVerified":     author.IsVerified,

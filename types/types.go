@@ -47,6 +47,7 @@ type Comment struct {
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsPartner      bool               `json:"isPartner"`
+	AuthorName     string             `json:"authorName"`
 	IsOwner        bool               `json:"isOwner"`
 	IsDeveloper    bool               `json:"isDeveloper"`
 	Replies        []Comment          `bson:"replies" json:"replies"`
