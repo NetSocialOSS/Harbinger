@@ -29,6 +29,13 @@ type NewPost struct {
 	Comments  []string           `json:"comments,omitempty" bson:"comments,omitempty"`
 }
 
+type UserSettingsUpdate struct {
+	DisplayName string `json:"displayName,omitempty"`
+	Bio         string `json:"bio,omitempty"`
+	Avatar      string `json:"avatar,omitempty"`
+	Banner      string `json:"banner,omitempty"`
+}
+
 type Author struct {
 	Bio            string    `bson:"bio" json:"bio"`
 	IsVerified     bool      `json:"isVerified"`

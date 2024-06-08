@@ -25,9 +25,9 @@ func main() {
 		Prefork:        true,
 		CaseSensitive:  true,
 		StrictRouting:  true,
-		ReadBufferSize: 100000,
-		ServerHeader:   "SocialFlux",
-		AppName:        "Share Your Post with the World at SocialFlux",
+		ReadBufferSize: 1000000,
+		ServerHeader:   "Net Social",
+		AppName:        "Connect, Share, Grow.",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
 			log.Println("Error:", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -38,7 +38,7 @@ func main() {
 
 	// Middleware: CORS
 	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,https://socialflux.xyz,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app",
+		AllowOrigins:     "http://localhost:3000,https://netsocial.co.in,https://beta.netsocial.co.in,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app",
 		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,HEAD",
 		AllowHeaders:     "Content-Type, Origin, X-Requested-With, Accept,x-client-key, x-client-token, x-client-secret, authorization",
 		AllowCredentials: true,
@@ -85,6 +85,7 @@ func main() {
 	//Users
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 	app.Get("/user/:username", routes.GetUserByName)
+	app.Post("/profile/settings", routes.UpdateProfileSettings)
 	app.Get("/profile/:userId/image", routes.ProfilePictureHandler)
 	app.Get("/profile/:userId/banner", routes.ProfileBannerHandler)
 
