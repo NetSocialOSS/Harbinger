@@ -6,6 +6,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -43,11 +44,39 @@ func GetUserByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
 	}
 
+	// Create a map to store user IDs and their corresponding usernames
+	userIDToUsername := make(map[primitive.ObjectID]string)
+
 	for cursor.Next(context.TODO()) {
 		var post types.Post
 		err := cursor.Decode(&post)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
+		}
+
+		// Replace user IDs in hearts with usernames
+		for i, heart := range post.Hearts {
+			heartID, err := primitive.ObjectIDFromHex(heart)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid heart ID"})
+			}
+
+			if username, found := userIDToUsername[heartID]; found {
+				post.Hearts[i] = username
+			} else {
+				var heartUser types.User
+				err := userCollection.FindOne(context.Background(), bson.M{"_id": heartID}).Decode(&heartUser)
+				if err != nil {
+					if err == mongo.ErrNoDocuments {
+						post.Hearts[i] = "Unknown User"
+					} else {
+						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching heart user data"})
+					}
+				} else {
+					userIDToUsername[heartID] = heartUser.Username
+					post.Hearts[i] = heartUser.Username
+				}
+			}
 		}
 
 		// Exclude comments from the post

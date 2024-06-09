@@ -79,6 +79,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	// Create a map to store userID to username mappings
+	userCache := make(map[primitive.ObjectID]string)
+
 	for i, post := range posts {
 		var author Author
 		err := usersCollection.FindOne(ctx, bson.M{"_id": post.AuthorID}).Decode(&author)
@@ -112,6 +115,31 @@ func GetAllPosts(c *fiber.Ctx) error {
 				continue
 			}
 			posts[i].Comments[j].AuthorName = commenter.Username
+		}
+
+		// Update hearts with author usernames
+		for j, heart := range post.Hearts {
+			userID, err := primitive.ObjectIDFromHex(heart)
+			if err != nil {
+				posts[i].Hearts[j] = "Unknown"
+				continue
+			}
+
+			// Check if the username is already in the cache
+			username, found := userCache[userID]
+			if !found {
+				var heartAuthor Author
+				err := usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&heartAuthor)
+				if err != nil {
+					// Handle error (user not found)
+					posts[i].Hearts[j] = "Unknown"
+					continue
+				}
+				username = heartAuthor.Username
+				userCache[userID] = username
+			}
+
+			posts[i].Hearts[j] = username
 		}
 	}
 

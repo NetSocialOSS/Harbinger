@@ -92,6 +92,8 @@ func main() {
 	//Post
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
+	app.Post("/post/like", routes.LikePost)
+	app.Post("/post/unlike", routes.UnlikePost)
 	app.Post("/comment/add", routes.AddComment)
 	app.Post("/post/add", routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
