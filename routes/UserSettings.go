@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -41,11 +42,31 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 
 	// Retrieve update parameters from both query and request body
 	var updateParams UserSettingsUpdate
-	// Parsing query parameters
-	updateParams.DisplayName = c.Query("displayName")
-	updateParams.Bio = c.Query("bio")
-	updateParams.ProfilePicture = c.Query("profilePicture")
-	updateParams.ProfileBanner = c.Query("profileBanner")
+	// Parsing and decoding query parameters
+	if displayName := c.Query("displayName"); displayName != "" {
+		decodedDisplayName, err := url.QueryUnescape(displayName)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid displayName provided",
+			})
+		}
+		updateParams.DisplayName = decodedDisplayName
+	}
+	if bio := c.Query("bio"); bio != "" {
+		decodedBio, err := url.QueryUnescape(bio)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid bio provided",
+			})
+		}
+		updateParams.Bio = decodedBio
+	}
+	if profilePicture := c.Query("profilePicture"); profilePicture != "" {
+		updateParams.ProfilePicture = profilePicture
+	}
+	if profileBanner := c.Query("profileBanner"); profileBanner != "" {
+		updateParams.ProfileBanner = profileBanner
+	}
 
 	// Parsing request body parameters (if any)
 	if err := c.BodyParser(&updateParams); err != nil {
