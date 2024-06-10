@@ -95,6 +95,7 @@ func main() {
 	app.Post("/post/like", routes.LikePost)
 	app.Post("/post/unlike", routes.UnlikePost)
 	app.Post("/comment/add", routes.AddComment)
+	app.Delete("/post/delete", routes.DeletePost)
 	app.Post("/post/add", routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
 	app.Get("/stats/posts/@all", routes.TotalPostsCount)
