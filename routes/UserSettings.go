@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"net/url"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -12,10 +13,11 @@ import (
 )
 
 type UserSettingsUpdate struct {
-	DisplayName    string `json:"displayName,omitempty"`
-	Bio            string `json:"bio,omitempty"`
-	ProfilePicture string `json:"profilePicture,omitempty"`
-	ProfileBanner  string `json:"profileBanner,omitempty"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Bio            string   `json:"bio,omitempty"`
+	ProfilePicture string   `json:"profilePicture,omitempty"`
+	ProfileBanner  string   `json:"profileBanner,omitempty"`
+	Links          []string `json:"links,omitempty"`
 }
 
 func UpdateProfileSettings(c *fiber.Ctx) error {
@@ -67,6 +69,15 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	if profileBanner := c.Query("profileBanner"); profileBanner != "" {
 		updateParams.ProfileBanner = profileBanner
 	}
+	if links := c.Query("links"); links != "" {
+		decodedLinks, err := url.QueryUnescape(links)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid links provided",
+			})
+		}
+		updateParams.Links = strings.Split(decodedLinks, ",")
+	}
 
 	// Parsing request body parameters (if any)
 	if err := c.BodyParser(&updateParams); err != nil {
@@ -88,6 +99,9 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	}
 	if updateParams.ProfileBanner != "" {
 		updateFields["profileBanner"] = updateParams.ProfileBanner
+	}
+	if len(updateParams.Links) > 0 {
+		updateFields["links"] = updateParams.Links
 	}
 
 	// Perform update operation
