@@ -8,6 +8,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func GetUserByName(c *fiber.Ctx) error {
@@ -36,10 +37,10 @@ func GetUserByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding user data"})
 	}
 
-	// Fetch posts made by the user without comments
+	// Fetch posts made by the user without comments, sorted by createdAt in descending order
 	var posts []types.Post
 	postCollection := db.Database("SocialFlux").Collection("posts")
-	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID})
+	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{"createdAt", -1}}))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
 	}
