@@ -283,7 +283,34 @@ func UserLogin(c *fiber.Ctx) error {
 		SameSite: "None",
 	})
 
+	// Send Discord webhook notification
+	err = sendDiscordWebhookLogin(user.Username)
+	if err != nil {
+		log.Printf("Error sending Discord webhook: %v", err)
+		// This error is logged but does not affect the response to the client
+	}
+
 	return c.JSON(fiber.Map{"message": "Logged in successfully"})
+}
+
+// sendDiscordWebhookLogin sends a message to a Discord webhook indicating a user login
+func sendDiscordWebhookLogin(username string) error {
+	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
+	if webhookURL == "" {
+		return errors.New("Discord webhook URL not set in environment variables")
+	}
+
+	content := "User logged in: " + username
+	message := discordwebhook.Message{
+		Content: &content,
+	}
+
+	err := discordwebhook.SendMessage(webhookURL, message)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func UserLogout(c *fiber.Ctx) error {
