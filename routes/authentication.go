@@ -283,6 +283,14 @@ func UserLogin(c *fiber.Ctx) error {
 		SameSite: "None",
 	})
 
+	c.Cookie(&fiber.Cookie{
+		Name:     "user_id",
+		Value:    user.ID.Hex(),
+		HTTPOnly: true,
+		Secure:   true,
+		SameSite: "None",
+	})
+
 	// Send Discord webhook notification
 	err = sendDiscordWebhookLogin(user.Username)
 	if err != nil {

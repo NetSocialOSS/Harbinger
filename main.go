@@ -25,7 +25,7 @@ func main() {
 		Prefork:        true,
 		CaseSensitive:  true,
 		StrictRouting:  true,
-		ReadBufferSize: 1000000,
+		ReadBufferSize: 100000000,
 		ServerHeader:   "Net Social",
 		AppName:        "Connect, Share, Grow.",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
