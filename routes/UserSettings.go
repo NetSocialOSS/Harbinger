@@ -44,38 +44,31 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 
 	// Retrieve update parameters from both query and request body
 	var updateParams UserSettingsUpdate
+
+	// Helper function to decode URL-encoded values
+	decodeIfNotEmpty := func(value string) string {
+		decoded, err := url.QueryUnescape(value)
+		if err != nil {
+			return value // Return original value if decoding fails
+		}
+		return decoded
+	}
+
 	// Parsing and decoding query parameters
 	if displayName := c.Query("displayName"); displayName != "" {
-		decodedDisplayName, err := url.QueryUnescape(displayName)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid displayName provided",
-			})
-		}
-		updateParams.DisplayName = decodedDisplayName
+		updateParams.DisplayName = decodeIfNotEmpty(displayName)
 	}
 	if bio := c.Query("bio"); bio != "" {
-		decodedBio, err := url.QueryUnescape(bio)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid bio provided",
-			})
-		}
-		updateParams.Bio = decodedBio
+		updateParams.Bio = decodeIfNotEmpty(bio)
 	}
 	if profilePicture := c.Query("profilePicture"); profilePicture != "" {
-		updateParams.ProfilePicture = profilePicture
+		updateParams.ProfilePicture = decodeIfNotEmpty(profilePicture)
 	}
 	if profileBanner := c.Query("profileBanner"); profileBanner != "" {
-		updateParams.ProfileBanner = profileBanner
+		updateParams.ProfileBanner = decodeIfNotEmpty(profileBanner)
 	}
 	if links := c.Query("links"); links != "" {
-		decodedLinks, err := url.QueryUnescape(links)
-		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid links provided",
-			})
-		}
+		decodedLinks := decodeIfNotEmpty(links)
 		updateParams.Links = strings.Split(decodedLinks, ",")
 	}
 

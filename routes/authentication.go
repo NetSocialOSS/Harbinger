@@ -283,14 +283,6 @@ func UserLogin(c *fiber.Ctx) error {
 		SameSite: "None",
 	})
 
-	c.Cookie(&fiber.Cookie{
-		Name:     "user_id",
-		Value:    user.ID.Hex(),
-		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "None",
-	})
-
 	// Send Discord webhook notification
 	err = sendDiscordWebhookLogin(user.Username)
 	if err != nil {
@@ -298,7 +290,7 @@ func UserLogin(c *fiber.Ctx) error {
 		// This error is logged but does not affect the response to the client
 	}
 
-	return c.JSON(fiber.Map{"message": "Logged in successfully"})
+	return c.JSON(fiber.Map{"message": "Logged in successfully", "user_id": user.ID.Hex()})
 }
 
 // sendDiscordWebhookLogin sends a message to a Discord webhook indicating a user login
