@@ -48,6 +48,23 @@ func GetUserByName(c *fiber.Ctx) error {
 	// Create a map to store user IDs and their corresponding usernames
 	userIDToUsername := make(map[primitive.ObjectID]string)
 
+	// Utility function to get username from ID
+	getUsername := func(id primitive.ObjectID) (string, error) {
+		if username, found := userIDToUsername[id]; found {
+			return username, nil
+		}
+		var u types.User
+		err := userCollection.FindOne(context.Background(), bson.M{"_id": id}).Decode(&u)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				return "Unknown User", nil
+			}
+			return "", err
+		}
+		userIDToUsername[id] = u.Username
+		return u.Username, nil
+	}
+
 	for cursor.Next(context.TODO()) {
 		var post types.Post
 		err := cursor.Decode(&post)
@@ -61,28 +78,43 @@ func GetUserByName(c *fiber.Ctx) error {
 			if err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid heart ID"})
 			}
-
-			if username, found := userIDToUsername[heartID]; found {
-				post.Hearts[i] = username
-			} else {
-				var heartUser types.User
-				err := userCollection.FindOne(context.Background(), bson.M{"_id": heartID}).Decode(&heartUser)
-				if err != nil {
-					if err == mongo.ErrNoDocuments {
-						post.Hearts[i] = "Unknown User"
-					} else {
-						return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching heart user data"})
-					}
-				} else {
-					userIDToUsername[heartID] = heartUser.Username
-					post.Hearts[i] = heartUser.Username
-				}
+			username, err := getUsername(heartID)
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching heart user data"})
 			}
+			post.Hearts[i] = username
 		}
 
 		// Exclude comments from the post
 		post.Comments = nil
 		posts = append(posts, post)
+	}
+
+	// Convert followers and following from IDs to usernames
+	var followersUsernames, followingUsernames []string
+
+	for _, followerID := range user.Followers {
+		followerObjectID, err := primitive.ObjectIDFromHex(followerID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid follower ID"})
+		}
+		username, err := getUsername(followerObjectID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching follower user data"})
+		}
+		followersUsernames = append(followersUsernames, username)
+	}
+
+	for _, followingID := range user.Following {
+		followingObjectID, err := primitive.ObjectIDFromHex(followingID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid following ID"})
+		}
+		username, err := getUsername(followingObjectID)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching following user data"})
+		}
+		followingUsernames = append(followingUsernames, username)
 	}
 
 	return c.JSON(fiber.Map{
@@ -95,6 +127,10 @@ func GetUserByName(c *fiber.Ctx) error {
 		"displayname":    user.DisplayName,
 		"bio":            user.Bio,
 		"createdAt":      user.CreatedAt,
+		"followersCount": len(user.Followers),
+		"followingCount": len(user.Following),
+		"followers":      followersUsernames,
+		"following":      followingUsernames,
 		"links":          user.Links,
 		"posts":          posts,
 	})

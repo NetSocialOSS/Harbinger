@@ -77,6 +77,8 @@ type User struct {
 	IsOwner        bool               `json:"isOwner"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
+	Followers      []string           `bson:"followers" json:"followers"`
+	Following      []string           `bson:"following" json:"following"`
 }
 
 type BlogPost struct {
@@ -91,13 +93,6 @@ type BlogPost struct {
 
 type PostEntry struct {
 	Body string `json:"body"`
-}
-
-type ServerStatus struct {
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Description string `json:"description,omitempty"`
-	URL         string `json:"url,omitempty"`
 }
 
 type Partner struct {
@@ -118,7 +113,6 @@ type Config struct {
 	ApiVersion int `json:"apiVersion"`
 	Database   `json:"database"`
 	Web        `json:"web"`
-	APIUrl     string `json:"apiUrl"`
 }
 
 type Database struct {
@@ -126,6 +120,5 @@ type Database struct {
 }
 
 type Web struct {
-	Port           string `json:"port"`
-	ImageUploadKey string `json:"ImageUploadKey"`
+	Port string `json:"port"`
 }
