@@ -10,6 +10,12 @@ require (
 
 require github.com/gtuk/discordwebhook v1.2.0
 
+require (
+	github.com/golang-jwt/jwt v3.2.2+incompatible // indirect
+	github.com/markbates/goth v1.80.0 // indirect
+	golang.org/x/oauth2 v0.21.0 // indirect
+)
+
 require github.com/dgrijalva/jwt-go v3.2.0+incompatible // direct
 
 require (
