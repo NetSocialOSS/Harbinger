@@ -87,6 +87,7 @@ func main() {
 	app.Get("/user/:username", routes.GetUserByName)
 	app.Post("/profile/settings", routes.UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", routes.FollowUser)
+	app.Post("/unfollow/:username/:followerID", routes.UnfollowUser)
 	app.Get("/profile/:userId/image", routes.ProfilePictureHandler)
 	app.Get("/profile/:userId/banner", routes.ProfileBannerHandler)
 
