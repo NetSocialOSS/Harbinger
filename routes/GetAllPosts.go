@@ -14,22 +14,17 @@ import (
 
 // Define Post structure
 type Post struct {
-	ID             string             `bson:"_id" json:"_id"`
-	Title          string             `bson:"title" json:"title"`
-	Content        string             `bson:"content" json:"content"`
-	AuthorID       primitive.ObjectID `bson:"author" json:"-"`
-	Author         Author             `bson:"-" json:"author"`
-	ImageURL       string             `bson:"imageUrl" json:"imageUrl"`
-	Hearts         []string           `bson:"hearts" json:"hearts"`
-	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
-	Comments       []Comment          `bson:"comments" json:"comments"`
-	CommentNumber  int                `bson:"commentNumber" json:"commentNumber"`
-	IsVerified     bool               `bson:"isVerified" json:"isVerified"`
-	IsDeveloper    bool               `json:"isDeveloper"`
-	IsPartner      bool               `json:"isPartner"`
-	IsOwner        bool               `json:"isOwner"`
-	IsOrganisation bool               `json:"isOrganisation"`
-	TimeAgo        string             `bson:"timeAgo" json:"timeAgo"`
+	ID            string             `bson:"_id" json:"_id"`
+	Title         string             `bson:"title" json:"title"`
+	Content       string             `bson:"content" json:"content"`
+	AuthorID      primitive.ObjectID `bson:"author" json:"-"`
+	Author        Author             `bson:"-" json:"author"`
+	ImageURL      string             `bson:"imageUrl" json:"imageUrl"`
+	Hearts        []string           `bson:"hearts" json:"hearts"`
+	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	Comments      []Comment          `bson:"comments" json:"comments"`
+	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
+	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
 }
 
 // Define Comment structure
