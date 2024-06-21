@@ -56,10 +56,11 @@ func ProfilePictureHandler(c *fiber.Ctx) error {
 		})
 	}
 
-	// Serve the image
-	return c.Type("jpg").Send(decoded)
+	// Serve the image with appropriate content type
+	return c.Send(decoded)
 }
 
+// ProfileBannerHandler handles requests to display a user's profile banner
 // ProfileBannerHandler handles requests to display a user's profile banner
 func ProfileBannerHandler(c *fiber.Ctx) error {
 	// Extract the username from the URL
@@ -106,8 +107,8 @@ func ProfileBannerHandler(c *fiber.Ctx) error {
 		})
 	}
 
-	// Serve the image
-	return c.Type("jpg").Send(decoded)
+	// Serve the image with appropriate content type
+	return c.Send(decoded)
 }
 
 // ProfileBannerHandler handles requests to display a user's profile banner
