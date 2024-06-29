@@ -81,6 +81,18 @@ type User struct {
 	Following      []string           `bson:"following" json:"following"`
 }
 
+type Coterie struct {
+	ID              primitive.ObjectID `bson:"_id" json:"_id"`
+	Name            string             `bson:"name" json:"name"`
+	Description     string             `bson:"description" json:"description"`
+	Members         []string           `bson:"members" json:"members"`
+	Owner           primitive.ObjectID `bson:"owner" json:"owner"`
+	OwnerUsername   string             `json:"ownerUsername"`
+	Banner          string             `json:"banner"`
+	Avatar          string             `json:"avatar"`
+	MemberUsernames []string           `json:"memberUsernames"`
+}
+
 type BlogPost struct {
 	Slug         string      `json:"slug"`
 	Title        string      `json:"title"`

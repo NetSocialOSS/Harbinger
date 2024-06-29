@@ -76,14 +76,10 @@ func main() {
 		})
 	})
 
-	//Count
-	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
-
 	//Authentication
 	routes.RegisterAuthRoutes(app)
 
 	//Users
-	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 	app.Get("/user/:username", routes.GetUserByName)
 	app.Post("/profile/settings", routes.UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", routes.FollowUser)
@@ -100,9 +96,14 @@ func main() {
 	app.Delete("/post/delete", routes.DeletePost)
 	app.Post("/post/add", routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
-	app.Get("/stats/posts/@all", routes.TotalPostsCount)
+
+	//Coterie
+	routes.CoterieRoutes(app)
 
 	//MISC
+	app.Get("/stats/posts/@all", routes.TotalPostsCount)
+	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
+	app.Get("/stats/users/@all", routes.RegistergedUserNum)
 	app.Get("/blog/posts/@all", routes.GetPosts)
 	app.Get("/partners/@all", routes.GetAllPartner)
 
