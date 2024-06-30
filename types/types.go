@@ -16,6 +16,7 @@ type Post struct {
 	Hearts    []string           `bson:"hearts" json:"hearts"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
 	Comments  []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
+	Coterie   string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
 }
 
 type NewPost struct {
@@ -88,9 +89,12 @@ type Coterie struct {
 	Members         []string           `bson:"members" json:"members"`
 	Owner           primitive.ObjectID `bson:"owner" json:"owner"`
 	OwnerUsername   string             `json:"ownerUsername"`
-	Banner          string             `json:"banner"`
-	Avatar          string             `json:"avatar"`
+	CreatedAt       time.Time          `bson:"createdAt" json:"createdAt"`
+	Banner          string             `bson:"banner"`
+	Avatar          string             `bson:"avatar"`
 	MemberUsernames []string           `json:"memberUsernames"`
+	Posts           []Post             `bson:"posts" json:"posts"`
+	TotalPosts      int                `json:"totalPosts"`
 }
 
 type BlogPost struct {

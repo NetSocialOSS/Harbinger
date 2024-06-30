@@ -24,7 +24,6 @@ func generateRandomID() string {
 }
 
 func AddPost(c *fiber.Ctx) error {
-	// Access MongoDB client from Fiber context
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -32,23 +31,20 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Access MongoDB collection for posts
 	postsCollection := db.Database("SocialFlux").Collection("posts")
 
-	// Extract query parameters
 	title := c.Query("title")
 	content := c.Query("content")
 	userId := c.Query("userId")
 	image := c.Query("image")
+	coterieName := c.Query("coterie")
 
-	// Validate required fields
 	if title == "" || content == "" || userId == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Title, content, and user ID are required",
 		})
 	}
 
-	// Convert userId to ObjectID
 	authorID, err := primitive.ObjectIDFromHex(userId)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -56,7 +52,6 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create a new post
 	post := types.Post{
 		ID:        generateRandomID(),
 		Title:     title,
@@ -66,9 +61,9 @@ func AddPost(c *fiber.Ctx) error {
 		Hearts:    []string{},
 		CreatedAt: time.Now(),
 		Comments:  []types.Comment{},
+		Coterie:   coterieName, // Include coterieName directly
 	}
 
-	// Insert the post into the database
 	_, err = postsCollection.InsertOne(c.Context(), post)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -76,6 +71,5 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Return the created post
 	return c.Status(http.StatusCreated).JSON(post)
 }

@@ -38,6 +38,8 @@ func GetAllCoterie(c *fiber.Ctx) error {
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 	userCollection := db.Database("SocialFlux").Collection("users")
+	postCollection := db.Database("SocialFlux").Collection("posts")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -52,21 +54,15 @@ func GetAllCoterie(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Create a map to store user IDs and their corresponding usernames
 	userIDToUsername := make(map[primitive.ObjectID]string)
-
-	// Create a slice to hold the final output
 	var result []map[string]interface{}
 
-	// Iterate over coteries to replace IDs with usernames
 	for _, coterie := range coteries {
-		// Get owner username
 		ownerUsername, err := getUsername(userCollection, coterie.Owner, userIDToUsername)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Get member usernames
 		var memberUsernames []string
 		for _, memberID := range coterie.Members {
 			memberObjectID, err := primitive.ObjectIDFromHex(memberID)
@@ -82,17 +78,22 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			memberUsernames = append(memberUsernames, memberUsername)
 		}
 
-		// Calculate total member count
-		totalMemberCount := len(memberUsernames)
+		// Fetch and count posts for this coterie
+		postCount, err := postCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
 
-		// Append the final coterie structure to the result
+		totalMemberCount := len(memberUsernames)
 		result = append(result, map[string]interface{}{
 			"_id":          coterie.ID.Hex(),
 			"name":         coterie.Name,
 			"description":  coterie.Description,
+			"createdAt":    coterie.CreatedAt,
 			"members":      memberUsernames,
 			"owner":        ownerUsername,
 			"TotalMembers": totalMemberCount,
+			"PostsCount":   postCount, // Adding the posts count
 		})
 	}
 
@@ -110,13 +111,12 @@ func GetCoterieByName(c *fiber.Ctx) error {
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 	userCollection := db.Database("SocialFlux").Collection("users")
+	postsCollection := db.Database("SocialFlux").Collection("posts")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Get the coterie name from the URL parameter
 	coterieName := c.Params("name")
 
-	// Find the coterie by its name (case-insensitive query)
 	var coterie types.Coterie
 	err := coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": coterieName, "$options": "i"}}).Decode(&coterie)
 	if err != nil {
@@ -126,16 +126,13 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Create a map to store user IDs and their corresponding usernames
 	userIDToUsername := make(map[primitive.ObjectID]string)
 
-	// Get owner username
 	ownerUsername, err := getUsername(userCollection, coterie.Owner, userIDToUsername)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Get member usernames
 	var memberUsernames []string
 	for _, memberID := range coterie.Members {
 		memberObjectID, err := primitive.ObjectIDFromHex(memberID)
@@ -151,19 +148,59 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		memberUsernames = append(memberUsernames, memberUsername)
 	}
 
-	// Calculate total member count
 	totalMemberCount := len(memberUsernames)
 
-	// Create the final coterie structure
+	// Fetch posts associated with this coterie
+	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer postCursor.Close(ctx)
+
+	var posts []map[string]interface{}
+	for postCursor.Next(ctx) {
+		var post types.Post
+		if err := postCursor.Decode(&post); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Fetch author details from users collection
+		var author types.User
+		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		// Prepare the post response with embedded author details
+		postMap := map[string]interface{}{
+			"_id":       post.ID,
+			"title":     post.Title,
+			"content":   post.Content,
+			"hearts":    post.Hearts,
+			"createdAt": post.CreatedAt,
+			"coterie":   post.Coterie,
+			"author": map[string]interface{}{
+				"isVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"isDeveloper":    author.IsDeveloper,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
+				"username":       author.Username,
+			},
+		}
+		posts = append(posts, postMap)
+	}
+
 	result := map[string]interface{}{
 		"_id":          coterie.ID.Hex(),
 		"name":         coterie.Name,
 		"description":  coterie.Description,
 		"members":      memberUsernames,
 		"owner":        ownerUsername,
+		"createdAt":    coterie.CreatedAt,
 		"TotalMembers": totalMemberCount,
+		"Post":         posts,
 	}
-
 	return c.JSON(result)
 }
 
@@ -206,7 +243,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create a new coterie instance
+	// Create a new coterie instance with the CreatedAt field
 	newCoterie := bson.M{
 		"_id":         primitive.NewObjectID(),
 		"name":        title,
@@ -215,6 +252,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		"owner":       ownerObjectID,
 		"banner":      "",
 		"avatar":      "",
+		"createdAt":   time.Now(),
 	}
 
 	// Insert the new coterie into the collection
@@ -232,6 +270,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		"owner":       bson.M{"$oid": newCoterie["owner"].(primitive.ObjectID).Hex()},
 		"banner":      newCoterie["banner"],
 		"avatar":      newCoterie["avatar"],
+		"createdAt":   newCoterie["createdAt"],
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(response)
