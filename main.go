@@ -22,7 +22,7 @@ func main() {
 
 	// Create Fiber app instance
 	app := fiber.New(fiber.Config{
-		Prefork:        true,
+		Prefork:        false,
 		CaseSensitive:  true,
 		StrictRouting:  true,
 		ReadBufferSize: 100000000,
