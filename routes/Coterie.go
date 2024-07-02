@@ -2,6 +2,8 @@ package routes
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"time"
 
 	"netsocial/types"
@@ -31,9 +33,7 @@ func getUsername(userCollection *mongo.Collection, id primitive.ObjectID, userID
 func GetAllCoterie(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -93,20 +93,18 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			"members":      memberUsernames,
 			"owner":        ownerUsername,
 			"TotalMembers": totalMemberCount,
-			"PostsCount":   postCount, // Adding the posts count
+			"PostsCount":   postCount,     // Adding the posts count
+			"roles":        coterie.Roles, // Return roles
 		})
 	}
 
 	return c.JSON(result)
 }
 
-// GetCoterieByName fetches the details of a specific coterie by its name.
 func GetCoterieByName(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -148,60 +146,23 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		memberUsernames = append(memberUsernames, memberUsername)
 	}
 
-	totalMemberCount := len(memberUsernames)
-
-	// Fetch posts associated with this coterie
-	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name})
+	// Fetch and count posts for this coterie
+	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
-	defer postCursor.Close(ctx)
 
-	var posts []map[string]interface{}
-	for postCursor.Next(ctx) {
-		var post types.Post
-		if err := postCursor.Decode(&post); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
+	coterie.OwnerUsername = ownerUsername
+	coterie.MemberUsernames = memberUsernames
+	coterie.TotalPosts = int(postCount)
 
-		// Fetch author details from users collection
-		var author types.User
-		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// Prepare the post response with embedded author details
-		postMap := map[string]interface{}{
-			"_id":       post.ID,
-			"title":     post.Title,
-			"content":   post.Content,
-			"hearts":    post.Hearts,
-			"createdAt": post.CreatedAt,
-			"coterie":   post.Coterie,
-			"author": map[string]interface{}{
-				"isVerified":     author.IsVerified,
-				"isOrganisation": author.IsOrganisation,
-				"isDeveloper":    author.IsDeveloper,
-				"isPartner":      author.IsPartner,
-				"isOwner":        author.IsOwner,
-				"username":       author.Username,
-			},
-		}
-		posts = append(posts, postMap)
-	}
-
+	// Return roles as well
 	result := map[string]interface{}{
-		"_id":          coterie.ID.Hex(),
-		"name":         coterie.Name,
-		"description":  coterie.Description,
-		"members":      memberUsernames,
-		"owner":        ownerUsername,
-		"createdAt":    coterie.CreatedAt,
-		"TotalMembers": totalMemberCount,
-		"Post":         posts,
+		"coterie": coterie,
+		"roles":   coterie.Roles,
 	}
-	return c.JSON(result)
+
+	return c.Status(fiber.StatusOK).JSON(result)
 }
 
 // AddNewCoterie handles the creation of a new coterie.
@@ -449,10 +410,122 @@ func LeaveCoterie(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(response)
 }
 
+func SetWarningLimit(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+
+	// Parse request parameters
+	name := c.Query("name")
+	limitStr := c.Query("limitnumber")
+	ownerIDStr := c.Query("OwnerID")
+
+	// Validate and convert parameters
+	limit, err := strconv.Atoi(limitStr)
+	if err != nil || limit < 1 || limit > 9 {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid warning limit. Must be between 1 and 9.",
+		})
+	}
+
+	ownerID, err := primitive.ObjectIDFromHex(ownerIDStr)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid OwnerID.",
+		})
+	}
+
+	// Check if the owner ID in the URL matches the owner ID in the coterie document
+	var coterie types.Coterie
+	err = coterieCollection.FindOne(context.Background(), bson.M{"name": name}).Decode(&coterie)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Coterie not found.",
+		})
+	}
+
+	if coterie.Owner != ownerID {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Unauthorized. Only the coterie owner can update the warning limit.",
+		})
+	}
+
+	// Update warning limit in database
+	filter := bson.M{"name": name, "owner": ownerID}
+	update := bson.M{"$set": bson.M{"warningLimit": limit}}
+
+	_, err = coterieCollection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update warning limit.",
+		})
+	}
+
+	// Respond with success message
+	return c.JSON(fiber.Map{
+		"message":      "Warning limit updated",
+		"warningLimit": limit,
+	})
+}
+
+func UpdateCoterieName(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+
+	// Parse request parameters
+	name := c.Query("name")
+	newName := c.Query("newname")
+	ownerIDStr := c.Query("ownerID")
+
+	// Validate owner ID
+	ownerID, err := primitive.ObjectIDFromHex(ownerIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid owner ID",
+		})
+	}
+
+	// Check if the owner ID matches the coterie owner
+	filter := bson.M{"name": name, "owner": ownerID}
+	update := bson.M{"$set": bson.M{"name": newName}}
+
+	// Perform the update operation
+	result, err := coterieCollection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update coterie name",
+		})
+	}
+
+	if result.ModifiedCount == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Coterie not found or you are not the owner",
+		})
+	}
+
+	// Respond with success message
+	return c.JSON(fiber.Map{
+		"message": "Coterie name updated successfully",
+		"oldName": name,
+		"newName": newName,
+	})
+}
+
 func CoterieRoutes(app *fiber.App) {
 	app.Get("/coterie/@all", GetAllCoterie)
 	app.Post("/coterie/leave", LeaveCoterie)
+	app.Post("/coterie/set-warning-limit", SetWarningLimit)
 	app.Get("/coterie/:name", GetCoterieByName)
+	app.Post("/coterie/update-name", UpdateCoterieName)
 	app.Post("/coterie/join", JoinCoterie)
 	app.Post("/coterie/new", AddNewCoterie)
 }

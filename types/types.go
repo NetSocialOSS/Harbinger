@@ -93,8 +93,11 @@ type Coterie struct {
 	Banner          string             `bson:"banner"`
 	Avatar          string             `bson:"avatar"`
 	MemberUsernames []string           `json:"memberUsernames"`
+	Warnings        map[string]int     `bson:"warnings,omitempty" json:"warnings"`
+	WarningLimit    int                `bson:"warningLimit" json:"warningLimit"`
 	Posts           []Post             `bson:"posts" json:"posts"`
 	TotalPosts      int                `json:"totalPosts"`
+	Roles           map[string]string  `bson:"roles" json:"roles"`
 }
 
 type BlogPost struct {
