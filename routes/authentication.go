@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"netsocial/types"
 	"os"
-	"socialflux/types"
 	"strings"
 	"time"
 

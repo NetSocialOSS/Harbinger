@@ -4,9 +4,9 @@ import (
 	"log"
 	"os"
 
-	"socialflux/configuration"
-	"socialflux/database"
-	"socialflux/routes"
+	"netsocial/configuration"
+	"netsocial/database"
+	"netsocial/routes"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"

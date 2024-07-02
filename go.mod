@@ -1,4 +1,4 @@
-module socialflux
+module netsocial
 
 go 1.21
 

@@ -3,7 +3,7 @@ package configuration
 import (
 	"os"
 
-	"socialflux/types"
+	"netsocial/types"
 )
 
 func getConfig() types.Config {
@@ -13,7 +13,7 @@ func getConfig() types.Config {
 			Url: os.Getenv("DATABASE_URL"),
 		},
 		Web: types.Web{
-			Port:           "8080",
+			Port: "8080",
 		},
 	}
 }
