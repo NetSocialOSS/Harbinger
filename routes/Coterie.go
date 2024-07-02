@@ -86,15 +86,14 @@ func GetAllCoterie(c *fiber.Ctx) error {
 
 		totalMemberCount := len(memberUsernames)
 		result = append(result, map[string]interface{}{
-			"_id":          coterie.ID.Hex(),
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
 			"members":      memberUsernames,
 			"owner":        ownerUsername,
 			"TotalMembers": totalMemberCount,
-			"PostsCount":   postCount,     // Adding the posts count
-			"roles":        coterie.Roles, // Return roles
+			"PostsCount":   postCount,
+			"roles":        coterie.Roles,
 		})
 	}
 
@@ -146,20 +145,64 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		memberUsernames = append(memberUsernames, memberUsername)
 	}
 
-	// Fetch and count posts for this coterie
 	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer postCursor.Close(ctx)
+
+	var posts []map[string]interface{}
+	for postCursor.Next(ctx) {
+		var post types.Post
+		if err := postCursor.Decode(&post); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		var author types.User
+		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+
+		postMap := map[string]interface{}{
+			"_id":       post.ID,
+			"title":     post.Title,
+			"content":   post.Content,
+			"hearts":    post.Hearts,
+			"createdAt": post.CreatedAt,
+			"coterie":   post.Coterie,
+			"author": map[string]interface{}{
+				"isVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"isDeveloper":    author.IsDeveloper,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
+				"username":       author.Username,
+			},
+		}
+		posts = append(posts, postMap)
+	}
+	totalMemberCount := len(memberUsernames)
+
 	coterie.OwnerUsername = ownerUsername
 	coterie.MemberUsernames = memberUsernames
 	coterie.TotalPosts = int(postCount)
 
-	// Return roles as well
 	result := map[string]interface{}{
-		"coterie": coterie,
-		"roles":   coterie.Roles,
+		"name":         coterie.Name,
+		"description":  coterie.Description,
+		"WarningLimit": coterie.WarningLimit,
+		"members":      memberUsernames,
+		"owner":        ownerUsername,
+		"createdAt":    coterie.CreatedAt,
+		"TotalMembers": totalMemberCount,
+		"Post":         posts,
+		"roles":        coterie.Roles,
 	}
 
 	return c.Status(fiber.StatusOK).JSON(result)
