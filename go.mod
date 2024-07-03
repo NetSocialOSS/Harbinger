@@ -14,6 +14,11 @@ require (
 )
 
 require (
+	github.com/philhofer/fwd v1.1.2 // indirect
+	github.com/tinylib/msgp v1.1.8 // indirect
+)
+
+require (
 	github.com/andybalholm/brotli v1.1.0 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect

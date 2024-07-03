@@ -10,6 +10,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gofiber/fiber/v2/middleware/session"
 	"github.com/joho/godotenv"
 )
@@ -76,10 +77,10 @@ func main() {
 		})
 	})
 
-	//Authentication
+	// Authentication
 	routes.RegisterAuthRoutes(app)
 
-	//Users
+	// Users
 	app.Get("/user/:username", routes.GetUserByName)
 	app.Post("/profile/settings", routes.UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", routes.FollowUser)
@@ -87,20 +88,31 @@ func main() {
 	app.Get("/profile/:userId/image", routes.ProfilePictureHandler)
 	app.Get("/profile/:userId/banner", routes.ProfileBannerHandler)
 
-	//Post
+	// Rate limit configuration
+	rateLimitConfig := limiter.Config{
+		Max:        5,             // Maximum number of requests
+		Expiration: 60 * 1000 * 5, // 5 minutes
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": "Woah! Slow down bucko! You're being rate limited!",
+			})
+		},
+	}
+
+	// Post routes with rate limiting
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
-	app.Post("/post/like", routes.LikePost)
-	app.Post("/post/unlike", routes.UnlikePost)
-	app.Post("/comment/add", routes.AddComment)
-	app.Delete("/post/delete", routes.DeletePost)
-	app.Post("/post/add", routes.AddPost)
+	app.Post("/post/like", limiter.New(rateLimitConfig), routes.LikePost)
+	app.Post("/post/unlike", limiter.New(rateLimitConfig), routes.UnlikePost)
+	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
+	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
+	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
 
-	//Coterie
+	// Coterie
 	routes.CoterieRoutes(app)
 
-	//MISC
+	// Misc
 	app.Get("/stats/posts/@all", routes.TotalPostsCount)
 	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
 	app.Get("/stats/users/@all", routes.RegistergedUserNum)
