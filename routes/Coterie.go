@@ -515,7 +515,7 @@ func SetWarningLimit(c *fiber.Ctx) error {
 	})
 }
 
-func UpdateCoterieName(c *fiber.Ctx) error {
+func UpdateCoterie(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -524,13 +524,13 @@ func UpdateCoterieName(c *fiber.Ctx) error {
 	}
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 
-	// Parse request parameters
-	name := c.Query("name")
-	newName := c.Query("newname")
-	ownerIDStr := c.Query("ownerID")
+	// Parse query parameters
+	newName := c.Query("newName")
+	newDescription := c.Query("newDescription")
+	ownerID := c.Query("ownerID")
 
 	// Validate owner ID
-	ownerID, err := primitive.ObjectIDFromHex(ownerIDStr)
+	ownerObjectID, err := primitive.ObjectIDFromHex(ownerID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid owner ID",
@@ -538,14 +538,24 @@ func UpdateCoterieName(c *fiber.Ctx) error {
 	}
 
 	// Check if the owner ID matches the coterie owner
-	filter := bson.M{"name": name, "owner": ownerID}
-	update := bson.M{"$set": bson.M{"name": newName}}
+	coterieName := c.Query("name")
+	filter := bson.M{"name": coterieName, "owner": ownerObjectID}
+
+	updateFields := bson.M{}
+	if newName != "" {
+		updateFields["name"] = newName
+	}
+	if newDescription != "" {
+		updateFields["description"] = newDescription
+	}
+
+	update := bson.M{"$set": updateFields}
 
 	// Perform the update operation
 	result, err := coterieCollection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to update coterie name",
+			"error": "Failed to update coterie",
 		})
 	}
 
@@ -556,11 +566,12 @@ func UpdateCoterieName(c *fiber.Ctx) error {
 	}
 
 	// Respond with success message
-	return c.JSON(fiber.Map{
-		"message": "Coterie name updated successfully",
-		"oldName": name,
-		"newName": newName,
-	})
+	response := fiber.Map{
+		"message": "Coterie updated successfully",
+		"updates": updateFields,
+	}
+
+	return c.JSON(response)
 }
 
 func CoterieRoutes(app *fiber.App) {
@@ -568,7 +579,7 @@ func CoterieRoutes(app *fiber.App) {
 	app.Post("/coterie/leave", LeaveCoterie)
 	app.Post("/coterie/set-warning-limit", SetWarningLimit)
 	app.Get("/coterie/:name", GetCoterieByName)
-	app.Post("/coterie/update-name", UpdateCoterieName)
+	app.Post("/coterie/update", UpdateCoterie)
 	app.Post("/coterie/join", JoinCoterie)
 	app.Post("/coterie/new", AddNewCoterie)
 }
