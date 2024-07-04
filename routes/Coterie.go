@@ -84,14 +84,13 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		totalMemberCount := len(memberUsernames)
 		result = append(result, map[string]interface{}{
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
 			"members":      memberUsernames,
 			"owner":        ownerUsername,
-			"TotalMembers": totalMemberCount,
+			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
 			"roles":        coterie.Roles,
 		})
@@ -187,7 +186,6 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		}
 		posts = append(posts, postMap)
 	}
-	totalMemberCount := len(memberUsernames)
 
 	coterie.OwnerUsername = ownerUsername
 	coterie.MemberUsernames = memberUsernames
@@ -200,7 +198,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		"members":      memberUsernames,
 		"owner":        ownerUsername,
 		"createdAt":    coterie.CreatedAt,
-		"TotalMembers": totalMemberCount,
+		"TotalMembers": len(memberUsernames),
 		"Post":         posts,
 		"roles":        coterie.Roles,
 	}
