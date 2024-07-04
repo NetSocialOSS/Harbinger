@@ -233,7 +233,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 	}
 
 	// Check if the owner exists in the users collection
-	var user bson.M
+	var user types.User
 	err = usersCollection.FindOne(ctx, bson.M{"_id": ownerObjectID}).Decode(&user)
 	if err == mongo.ErrNoDocuments {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -245,12 +245,32 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		})
 	}
 
+	// Check if the owner is banned
+	if user.IsBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Hey there, you are banned from using NetSocial's services.",
+		})
+	}
+
+	// Check if a coterie with the same name already exists
+	var existingCoterie types.Coterie
+	err = coterieCollection.FindOne(ctx, bson.M{"name": title}).Decode(&existingCoterie)
+	if err == nil {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+			"error": "A coterie with the same name already exists",
+		})
+	} else if err != mongo.ErrNoDocuments {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error checking coterie name: " + err.Error(),
+		})
+	}
+
 	// Create a new coterie instance with the CreatedAt field
 	newCoterie := bson.M{
 		"_id":         primitive.NewObjectID(),
 		"name":        title,
 		"description": "",
-		"members":     []string{},
+		"members":     []primitive.ObjectID{ownerObjectID},
 		"owner":       ownerObjectID,
 		"banner":      "",
 		"avatar":      "",
@@ -268,7 +288,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		"_id":         newCoterie["_id"].(primitive.ObjectID).Hex(),
 		"name":        newCoterie["name"],
 		"description": newCoterie["description"],
-		"members":     newCoterie["members"],
+		"members":     []string{newCoterie["owner"].(primitive.ObjectID).Hex()},
 		"owner":       bson.M{"$oid": newCoterie["owner"].(primitive.ObjectID).Hex()},
 		"banner":      newCoterie["banner"],
 		"avatar":      newCoterie["avatar"],
@@ -278,7 +298,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(response)
 }
 
-// JoinCoterie allows a user to join a coterie by its name and the user's id
+// JoinCoterie allows a user to join a coterie by its name and the user's ID
 func JoinCoterie(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
@@ -292,7 +312,7 @@ func JoinCoterie(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Get the coterie name and joiner id from the URL parameters
+	// Get the coterie name and joiner ID from the URL parameters
 	coterieName := c.Query("name")
 	joinerID := c.Query("userID")
 
@@ -305,7 +325,7 @@ func JoinCoterie(c *fiber.Ctx) error {
 	}
 
 	// Check if the joiner exists in the users collection
-	var joiner bson.M
+	var joiner types.User
 	err = userCollection.FindOne(ctx, bson.M{"_id": joinerObjectID}).Decode(&joiner)
 	if err == mongo.ErrNoDocuments {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
@@ -313,7 +333,14 @@ func JoinCoterie(c *fiber.Ctx) error {
 		})
 	} else if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error checking users existence: " + err.Error(),
+			"error": "Error checking user's existence: " + err.Error(),
+		})
+	}
+
+	// Check if the user is banned
+	if joiner.IsBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Hey there, you are banned from using NetSocial's services.",
 		})
 	}
 

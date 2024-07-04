@@ -76,6 +76,7 @@ type User struct {
 	IsDeveloper    bool               `json:"isDeveloper"`
 	IsPartner      bool               `json:"isPartner"`
 	IsOwner        bool               `json:"isOwner"`
+	IsBanned       bool               `json:"isBanned"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
 	Followers      []string           `bson:"followers" json:"followers"`

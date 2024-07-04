@@ -8,6 +8,7 @@ import (
 	"netsocial/types"
 
 	"github.com/gofiber/fiber/v2"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
@@ -32,6 +33,7 @@ func AddPost(c *fiber.Ctx) error {
 	}
 
 	postsCollection := db.Database("SocialFlux").Collection("posts")
+	usersCollection := db.Database("SocialFlux").Collection("users")
 
 	title := c.Query("title")
 	content := c.Query("content")
@@ -49,6 +51,21 @@ func AddPost(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid user ID format",
+		})
+	}
+
+	// Check if the user is banned
+	var user types.User
+	err = usersCollection.FindOne(c.Context(), bson.M{"_id": authorID}).Decode(&user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch user information",
+		})
+	}
+
+	if user.IsBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Hey there, you are banned from using NetSocial's services.",
 		})
 	}
 
