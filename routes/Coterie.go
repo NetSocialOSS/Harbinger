@@ -252,12 +252,12 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if a coterie with the same name already exists
+	// Check if a coterie with a similar name already exists
 	var existingCoterie types.Coterie
-	err = coterieCollection.FindOne(ctx, bson.M{"name": title}).Decode(&existingCoterie)
+	err = coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": "^" + title + "$", "$options": "i"}}).Decode(&existingCoterie)
 	if err == nil {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"error": "A coterie with the same name already exists",
+			"error": "A coterie with a similar name already exists",
 		})
 	} else if err != mongo.ErrNoDocuments {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -312,7 +312,6 @@ func JoinCoterie(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Get the coterie name and joiner ID from the URL parameters
 	coterieName := c.Query("name")
 	joinerID := c.Query("userID")
 
@@ -359,6 +358,15 @@ func JoinCoterie(c *fiber.Ctx) error {
 		if memberID == joinerID {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"error": "User is already a member of the coterie",
+			})
+		}
+	}
+
+	// Check if the joiner is in the banned members list
+	for _, bannedID := range coterie.BannedMembers {
+		if bannedID == joinerID {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error": "You are banned from joining this coterie",
 			})
 		}
 	}

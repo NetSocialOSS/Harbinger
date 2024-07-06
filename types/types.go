@@ -97,6 +97,7 @@ type Coterie struct {
 	Warnings        map[string]int     `bson:"warnings,omitempty" json:"warnings"`
 	WarningLimit    int                `bson:"warningLimit" json:"warningLimit"`
 	Posts           []Post             `bson:"posts" json:"posts"`
+	BannedMembers   []string           `bson:"bannedMembers" json:"bannedMembers"`
 	TotalPosts      int                `json:"totalPosts"`
 	Roles           map[string]string  `bson:"roles" json:"roles"`
 }
