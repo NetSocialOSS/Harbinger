@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"netsocial/types"
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
@@ -28,6 +29,24 @@ func LikePost(c *fiber.Ctx) error {
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Database connection not available",
+		})
+	}
+
+	// Access MongoDB collection for users
+	usersCollection := db.Database("SocialFlux").Collection("users")
+
+	// Check if the user is banned
+	var user types.User
+	err = usersCollection.FindOne(context.Background(), bson.M{"_id": likedByID}).Decode(&user)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch user details",
+		})
+	}
+
+	if user.IsBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "You are banned from using NetSocial's services",
 		})
 	}
 

@@ -37,7 +37,9 @@ func GetPostById(c *fiber.Ctx) error {
 		"createdAt": 1,
 		"hearts":    1,
 		"imageUrl":  1,
-		"comments":  1, // Include comments in projection
+		"comments": bson.M{
+			"$elemMatch": bson.M{}, // Only include the first matching comment
+		},
 	})
 
 	// Find the post by its ID
@@ -62,7 +64,7 @@ func GetPostById(c *fiber.Ctx) error {
 		})
 	}
 
-	// Fetch comments with author details from the users collection
+	// Fetch comments with limited author details
 	var comments []types.Comment
 	for _, comment := range post.Comments {
 		var commentAuthor types.Author
@@ -79,9 +81,9 @@ func GetPostById(c *fiber.Ctx) error {
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
 			IsPartner:      commentAuthor.IsPartner,
+			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsDeveloper:    commentAuthor.IsDeveloper,
-			AuthorName:     commentAuthor.Username,
 			Replies:        comment.Replies,
 		}
 		comments = append(comments, commentData)

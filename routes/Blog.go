@@ -21,15 +21,15 @@ func GetPosts(c *fiber.Ctx) error {
 		})
 	}
 
-	servCollection := db.Database("SocialFlux").Collection("blogposts")
+	blogCollection := db.Database("SocialFlux").Collection("blogposts")
 
 	// Fetch all documents from the collection
-	var servers []types.BlogPost
-	cursor, err := servCollection.Find(context.Background(), bson.D{})
+	var blogs []types.BlogPost
+	cursor, err := blogCollection.Find(context.Background(), bson.D{})
 	if err != nil {
-		log.Println("Error fetching server posts:", err)
+		log.Println("Error fetching blog posts:", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch server posts",
+			"error": "Failed to fetch blog posts",
 		})
 	}
 	defer cursor.Close(context.Background())
@@ -42,7 +42,7 @@ func GetPosts(c *fiber.Ctx) error {
 				"error": "Failed to decode server post",
 			})
 		}
-		servers = append(servers, server)
+		blogs = append(blogs, server)
 	}
 
 	if err := cursor.Err(); err != nil {
@@ -53,5 +53,5 @@ func GetPosts(c *fiber.Ctx) error {
 	}
 
 	// Send the JSON response
-	return c.JSON(servers)
+	return c.JSON(blogs)
 }

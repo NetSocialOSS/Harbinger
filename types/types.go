@@ -51,7 +51,7 @@ type Author struct {
 type Comment struct {
 	ID             primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
 	Content        string             `bson:"content" json:"content"`
-	Author         primitive.ObjectID `bson:"author" json:"author"`
+	Author         primitive.ObjectID `bson:"author" json:"-"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsPartner      bool               `json:"isPartner"`
@@ -76,6 +76,7 @@ type User struct {
 	IsDeveloper    bool               `json:"isDeveloper"`
 	IsPartner      bool               `json:"isPartner"`
 	IsOwner        bool               `json:"isOwner"`
+	IsBanned       bool               `json:"isBanned"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
 	Followers      []string           `bson:"followers" json:"followers"`
@@ -83,21 +84,26 @@ type User struct {
 }
 
 type Coterie struct {
-	ID              primitive.ObjectID `bson:"_id" json:"_id"`
-	Name            string             `bson:"name" json:"name"`
-	Description     string             `bson:"description" json:"description"`
-	Members         []string           `bson:"members" json:"members"`
-	Owner           primitive.ObjectID `bson:"owner" json:"owner"`
-	OwnerUsername   string             `json:"ownerUsername"`
-	CreatedAt       time.Time          `bson:"createdAt" json:"createdAt"`
-	Banner          string             `bson:"banner"`
-	Avatar          string             `bson:"avatar"`
-	MemberUsernames []string           `json:"memberUsernames"`
-	Warnings        map[string]int     `bson:"warnings,omitempty" json:"warnings"`
-	WarningLimit    int                `bson:"warningLimit" json:"warningLimit"`
-	Posts           []Post             `bson:"posts" json:"posts"`
-	TotalPosts      int                `json:"totalPosts"`
-	Roles           map[string]string  `bson:"roles" json:"roles"`
+	ID              primitive.ObjectID         `bson:"_id" json:"_id"`
+	Name            string                     `bson:"name" json:"name"`
+	Description     string                     `bson:"description" json:"description"`
+	Members         []string                   `bson:"members" json:"members"`
+	Owner           primitive.ObjectID         `bson:"owner" json:"owner"`
+	OwnerUsername   string                     `json:"ownerUsername,omitempty"`
+	CreatedAt       time.Time                  `bson:"createdAt" json:"createdAt"`
+	Banner          string                     `bson:"banner" json:"banner,omitempty"`
+	Avatar          string                     `bson:"avatar" json:"avatar,omitempty"`
+	TotalPosts      int                        `json:"totalPosts,omitempty"`
+	Roles           map[string]string          `bson:"roles,omitempty" json:"roles,omitempty"`
+	BannedMembers   []string                   `bson:"bannedMembers,omitempty" json:"bannedMembers,omitempty"`
+	MemberUsernames []string                   `json:"memberUsernames,omitempty"`
+	WarningDetails  map[string][]WarningDetail `bson:"warningDetails,omitempty" json:"warningDetails,omitempty"`
+	WarningLimit    int                        `bson:"warningLimit" json:"warningLimit"`
+}
+
+type WarningDetail struct {
+	Reason string    `bson:"reason" json:"reason"`
+	Time   time.Time `bson:"time" json:"time"`
 }
 
 type BlogPost struct {

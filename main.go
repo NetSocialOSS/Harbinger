@@ -109,6 +109,10 @@ func main() {
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
 	app.Get("/posts/:postId/image", routes.PostImageHandler)
 
+	// Report
+	app.Post("/report/user", limiter.New(rateLimitConfig), routes.ReportUser)
+	app.Post("/report/post", limiter.New(rateLimitConfig), routes.ReportPost)
+
 	// Coterie
 	routes.CoterieRoutes(app)
 

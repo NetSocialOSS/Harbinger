@@ -69,6 +69,13 @@ func AddComment(c *fiber.Ctx) error {
 		})
 	}
 
+	// Check if the author is banned
+	if author.IsBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"message": "Hey there, you are banned from using NetSocial's services.",
+		})
+	}
+
 	// Update the post with the new comment
 	filter := bson.M{"_id": postID} // Use postID as a string
 	update := bson.M{"$push": bson.M{"comments": comment}}

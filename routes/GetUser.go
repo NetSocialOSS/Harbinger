@@ -123,6 +123,7 @@ func GetUserByName(c *fiber.Ctx) error {
 		"isOrganisation": user.IsOrganisation,
 		"isDeveloper":    user.IsDeveloper,
 		"isOwner":        user.IsOwner,
+		"isBanned":       user.IsBanned,
 		"isPartner":      user.IsPartner,
 		"displayname":    user.DisplayName,
 		"bio":            user.Bio,
