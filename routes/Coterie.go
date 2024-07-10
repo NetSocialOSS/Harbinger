@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func getUsername(userCollection *mongo.Collection, id primitive.ObjectID, userIDToUsername map[primitive.ObjectID]string) (string, error) {
@@ -162,17 +164,34 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
+		// Replace author ID with username
 		var author types.User
 		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
+		// Replace hearts IDs with usernames
+		var heartsUsernames []string
+		for _, heartID := range post.Hearts {
+			heartObjectID, err := primitive.ObjectIDFromHex(heartID)
+			if err != nil {
+				heartsUsernames = append(heartsUsernames, "Invalid ID")
+				continue
+			}
+			heartUsername, err := getUsername(userCollection, heartObjectID, userIDToUsername)
+			if err != nil {
+				heartsUsernames = append(heartsUsernames, "Unknown User")
+				continue
+			}
+			heartsUsernames = append(heartsUsernames, heartUsername)
+		}
+
 		postMap := map[string]interface{}{
 			"_id":       post.ID,
 			"title":     post.Title,
 			"content":   post.Content,
-			"hearts":    post.Hearts,
+			"hearts":    heartsUsernames,
 			"createdAt": post.CreatedAt,
 			"coterie":   post.Coterie,
 			"author": map[string]interface{}{
@@ -389,8 +408,7 @@ func JoinCoterie(c *fiber.Ctx) error {
 		"_id":          coterie.ID.Hex(),
 		"name":         coterie.Name,
 		"description":  coterie.Description,
-		"members":      coterie.Members,
-		"owner":        coterie.Owner.Hex(),
+		"message":      fmt.Sprintf("You have successfully joined '%s'", coterie.Name),
 		"TotalMembers": len(coterie.Members),
 	}
 
@@ -475,12 +493,10 @@ func LeaveCoterie(c *fiber.Ctx) error {
 
 	// Prepare the response
 	response := map[string]interface{}{
-		"_id":          coterie.ID.Hex(),
-		"name":         coterie.Name,
-		"description":  coterie.Description,
-		"members":      newMembers,
-		"owner":        coterie.Owner.Hex(),
-		"TotalMembers": len(newMembers),
+		"_id":         coterie.ID.Hex(),
+		"name":        coterie.Name,
+		"description": coterie.Description,
+		"message":     fmt.Sprintf("You have successfully left '%s'", coterie.Name),
 	}
 
 	return c.Status(fiber.StatusOK).JSON(response)
@@ -607,6 +623,93 @@ func UpdateCoterie(c *fiber.Ctx) error {
 	return c.JSON(response)
 }
 
+func WarnMember(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+	}
+
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+	userCollection := db.Database("SocialFlux").Collection("users")
+
+	name := c.Query("name")
+	membername := c.Query("membername")
+	ownerIDStr := c.Query("ownerID")
+	reason := c.Query("reason")
+
+	if name == "" || membername == "" || ownerIDStr == "" || reason == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "All query parameters are required"})
+	}
+
+	ownerID, err := primitive.ObjectIDFromHex(ownerIDStr)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid ownerID format"})
+	}
+
+	var member bson.M
+	err = userCollection.FindOne(context.TODO(), bson.M{"username": membername}).Decode(&member)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Member not found"})
+	}
+
+	var owner bson.M
+	err = userCollection.FindOne(context.TODO(), bson.M{"_id": ownerID}).Decode(&owner)
+	if err != nil {
+		return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "Owner not found"})
+	}
+
+	memberID := member["_id"].(primitive.ObjectID).Hex()
+
+	// Update warning details in the coterie
+	filter := bson.M{"name": name, "owner": ownerID}
+	update := bson.M{
+		"$push": bson.M{
+			"warningDetails." + memberID: bson.M{
+				"reason": reason,
+				"time":   time.Now(),
+			},
+		},
+	}
+
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
+	var updatedCoterie types.Coterie
+	err = coterieCollection.FindOneAndUpdate(context.TODO(), filter, update, opts).Decode(&updatedCoterie)
+	if err != nil {
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update coterie"})
+	}
+
+	// Check if member has exceeded warning limit
+	if len(updatedCoterie.WarningDetails[memberID]) > updatedCoterie.WarningLimit {
+		// Remove member from the members list
+		filter := bson.M{"name": name, "owner": ownerID}
+		update := bson.M{
+			"$pull": bson.M{"members": memberID},
+		}
+
+		opts := options.Update().SetUpsert(false)
+		_, err := coterieCollection.UpdateOne(context.TODO(), filter, update, opts)
+		if err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to remove member"})
+		}
+
+		// Remove member's warning details
+		updateWarning := bson.M{
+			"$unset": bson.M{"warningDetails." + memberID: ""},
+		}
+
+		_, err = coterieCollection.UpdateOne(context.TODO(), filter, updateWarning, opts)
+		if err != nil {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to remove member's warning details"})
+		}
+
+		// Return response with removal message
+		return c.Status(http.StatusOK).JSON(fiber.Map{"message": fmt.Sprintf("User removed because they reached the warning limit %d", updatedCoterie.WarningLimit)})
+	}
+
+	// Return success response if member warning was added without reaching limit
+	return c.Status(http.StatusOK).JSON(updatedCoterie)
+}
+
 func CoterieRoutes(app *fiber.App) {
 	app.Get("/coterie/@all", GetAllCoterie)
 	app.Post("/coterie/leave", LeaveCoterie)
@@ -614,5 +717,6 @@ func CoterieRoutes(app *fiber.App) {
 	app.Get("/coterie/:name", GetCoterieByName)
 	app.Post("/coterie/update", UpdateCoterie)
 	app.Post("/coterie/join", JoinCoterie)
+	app.Post("/coterie/warn", WarnMember)
 	app.Post("/coterie/new", AddNewCoterie)
 }
