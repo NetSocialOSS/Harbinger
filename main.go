@@ -112,6 +112,7 @@ func main() {
 	// Report
 	app.Post("/report/user", limiter.New(rateLimitConfig), routes.ReportUser)
 	app.Post("/report/post", limiter.New(rateLimitConfig), routes.ReportPost)
+	app.Post("/report/coterie", limiter.New(rateLimitConfig), routes.ReportCoterie)
 
 	// Coterie
 	routes.CoterieRoutes(app)
