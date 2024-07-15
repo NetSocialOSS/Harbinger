@@ -90,7 +90,6 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
-			"members":      memberUsernames,
 			"owner":        ownerUsername,
 			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
