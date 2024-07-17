@@ -10,6 +10,7 @@ import (
 	"netsocial/types"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -980,15 +981,26 @@ func BanUser(c *fiber.Ctx) error {
 	})
 }
 
+// Rate limit configuration
+var rateLimitConfig = limiter.Config{
+	Max:        5,             // Maximum number of requests
+	Expiration: 60 * 1000 * 2, // 2 minutes
+	LimitReached: func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "Woah! Slow down bucko! You're being rate limited!",
+		})
+	},
+}
+
 func CoterieRoutes(app *fiber.App) {
 	app.Get("/coterie/@all", GetAllCoterie)
-	app.Post("/coterie/leave", LeaveCoterie)
-	app.Post("/coterie/set-warning-limit", SetWarningLimit)
+	app.Post("/coterie/leave", limiter.New(rateLimitConfig), LeaveCoterie)
+	app.Post("/coterie/set-warning-limit", limiter.New(rateLimitConfig), SetWarningLimit)
 	app.Get("/coterie/:name", GetCoterieByName)
-	app.Post("/coterie/update", UpdateCoterie)
-	app.Post("/coterie/join", JoinCoterie)
-	app.Post("/coterie/promote", promoteMember)
-	app.Post("/coterie/ban", BanUser)
-	app.Post("/coterie/warn", WarnMember)
-	app.Post("/coterie/new", AddNewCoterie)
+	app.Post("/coterie/update", limiter.New(rateLimitConfig), UpdateCoterie)
+	app.Post("/coterie/join", limiter.New(rateLimitConfig), JoinCoterie)
+	app.Post("/coterie/promote", limiter.New(rateLimitConfig), promoteMember)
+	app.Post("/coterie/ban", limiter.New(rateLimitConfig), BanUser)
+	app.Post("/coterie/warn", limiter.New(rateLimitConfig), WarnMember)
+	app.Post("/coterie/new", limiter.New(rateLimitConfig), AddNewCoterie)
 }
