@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gtuk/discordwebhook"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -252,4 +253,22 @@ func ReportCoterie(c *fiber.Ctx) error {
 	}
 
 	return c.SendString("Coterie reported successfully")
+}
+
+// Rate limit configuration
+
+var reportratelimit = limiter.Config{
+	Max:        5,             // Maximum number of requests
+	Expiration: 60 * 1000 * 5, // 5 minutes
+	LimitReached: func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "Woah! Slow down bucko! You're being rate limited!",
+		})
+	},
+}
+
+func Report(app *fiber.App) {
+	app.Post("/report/user", limiter.New(reportratelimit), ReportUser)
+	app.Post("/report/post", limiter.New(reportratelimit), ReportPost)
+	app.Post("/report/coterie", limiter.New(reportratelimit), ReportCoterie)
 }
