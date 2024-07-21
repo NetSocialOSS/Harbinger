@@ -116,9 +116,7 @@ func main() {
 	routes.CoterieRoutes(app)
 
 	// Misc
-	app.Get("/stats/posts/@all", routes.TotalPostsCount)
-	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
-	app.Get("/stats/users/@all", routes.RegistergedUserNum)
+	routes.Stats(app)
 	app.Get("/blog/posts/@all", routes.GetPosts)
 	app.Get("/partners/@all", routes.GetAllPartner)
 

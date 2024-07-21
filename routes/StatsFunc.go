@@ -71,3 +71,9 @@ func TotalPostsCount(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{"total_posts": totalpartner})
 }
+
+func Stats(app *fiber.App) {
+	app.Get("/stats/posts/@all", TotalPostsCount)
+	app.Get("/stats/partners/@all", TotalPartnersCount)
+	app.Get("/stats/users/@all", RegistergedUserNum)
+}

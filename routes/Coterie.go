@@ -264,8 +264,8 @@ func AddNewCoterie(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Get the title and owner from query parameters
-	title := c.Query("title")
+	// Get the name and owner from query parameters
+	title := c.Query("name")
 	owner := c.Query("owner")
 
 	// Validate the owner ObjectID
@@ -296,12 +296,12 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if a coterie with a similar name already exists
+	// Check if a coterie with an exact name already exists
 	var existingCoterie types.Coterie
-	err = coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": "^" + title + "$", "$options": "i"}}).Decode(&existingCoterie)
+	err = coterieCollection.FindOne(ctx, bson.M{"name": title}).Decode(&existingCoterie)
 	if err == nil {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
-			"error": "A coterie with a similar name already exists",
+			"error": "A coterie with this name already exists",
 		})
 	} else if err != mongo.ErrNoDocuments {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

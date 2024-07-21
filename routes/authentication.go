@@ -345,7 +345,6 @@ func CurrentUser(c *fiber.Ctx) error {
 		"displayname": user.DisplayName,
 		"bio":         user.Bio,
 		"createdAt":   user.CreatedAt,
-		"_id":         user.ID.Hex(),
 	})
 }
 
