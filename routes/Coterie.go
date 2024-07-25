@@ -87,14 +87,20 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		result = append(result, map[string]interface{}{
+		coterieMap := map[string]interface{}{
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
 			"owner":        ownerUsername,
 			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
-		})
+		}
+
+		if coterie.Avatar != "" {
+			coterieMap["avatar"] = coterie.Avatar
+		}
+
+		result = append(result, coterieMap)
 	}
 
 	return c.JSON(result)
