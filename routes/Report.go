@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/gtuk/discordwebhook"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -48,6 +49,7 @@ func getReporterUsername(c *fiber.Ctx, reporterID string) (string, error) {
 func ReportUser(c *fiber.Ctx) error {
 	reportedUsername := c.Query("reportedUsername")
 	reporterID := c.Query("reporterID")
+	reason := c.Query("reason")
 
 	reporterUsername, err := getReporterUsername(c, reporterID)
 	if err != nil {
@@ -65,6 +67,9 @@ func ReportUser(c *fiber.Ctx) error {
 	description := fmt.Sprintf("[Reported User: %s](https://netsocial.app/user/%s)", reportedUsername, reportedUsername)
 	reporterUsernameField := "Reporter"
 	reporterUsernameValue := reporterUsername
+	reasonField := "Reason"
+	reasonValue := reason
+
 	embed := discordwebhook.Embed{
 		Title:       &title,
 		Description: &description,
@@ -73,10 +78,14 @@ func ReportUser(c *fiber.Ctx) error {
 				Name:  &reporterUsernameField,
 				Value: &reporterUsernameValue,
 			},
+			{
+				Name:  &reasonField,
+				Value: &reasonValue,
+			},
 		},
 	}
 
-	content := fmt.Sprintf("User %s has been reported by %s", reportedUsername, reporterUsername)
+	content := fmt.Sprintf("User %s has been reported by %s for reason: %s", reportedUsername, reporterUsername, reason)
 	message := discordwebhook.Message{
 		Content: &content,
 		Embeds:  &[]discordwebhook.Embed{embed},
@@ -95,6 +104,7 @@ func ReportUser(c *fiber.Ctx) error {
 func ReportPost(c *fiber.Ctx) error {
 	reportedPostID := c.Query("reportedPostID")
 	reporterID := c.Query("reporterID")
+	reason := c.Query("reason")
 
 	reporterUsername, err := getReporterUsername(c, reporterID)
 	if err != nil {
@@ -134,6 +144,9 @@ func ReportPost(c *fiber.Ctx) error {
 	description := fmt.Sprintf("[Reported Post](https://netsocial.app/post/%s)", reportedPostID)
 	reporterUsernameField := "Reporter"
 	reporterUsernameValue := reporterUsername
+	reasonField := "Reason"
+	reasonValue := reason
+
 	embed := discordwebhook.Embed{
 		Title:       &title,
 		Description: &description,
@@ -142,10 +155,14 @@ func ReportPost(c *fiber.Ctx) error {
 				Name:  &reporterUsernameField,
 				Value: &reporterUsernameValue,
 			},
+			{
+				Name:  &reasonField,
+				Value: &reasonValue,
+			},
 		},
 	}
 
-	content := fmt.Sprintf("Post %s has been reported by %s", reportedPostID, reporterUsername)
+	content := fmt.Sprintf("Post %s has been reported by %s for reason: %s", reportedPostID, reporterUsername, reason)
 	message := discordwebhook.Message{
 		Content: &content,
 		Embeds:  &[]discordwebhook.Embed{embed},
@@ -158,4 +175,100 @@ func ReportPost(c *fiber.Ctx) error {
 	}
 
 	return c.SendString("Post reported successfully")
+}
+
+// ReportCoterie handles reporting a coterie
+func ReportCoterie(c *fiber.Ctx) error {
+	CoterieName := c.Query("Coterie")
+	reporterID := c.Query("reporterID")
+	reason := c.Query("reason")
+
+	reporterUsername, err := getReporterUsername(c, reporterID)
+	if err != nil {
+		log.Println("Error fetching reporter username:", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch reporter username"})
+	}
+
+	if reporterUsername == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reporter ID"})
+	}
+
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).SendString("Database connection not available")
+	}
+
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+
+	// Check if the Coterie exists in the collection
+	filter := bson.M{"name": CoterieName}
+	var Coterie struct {
+		ID   string `bson:"_id,omitempty"`
+		Name string `json:"name"`
+	}
+
+	err = coterieCollection.FindOne(context.Background(), filter).Decode(&Coterie)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reported coterie name"})
+		}
+		log.Println("Error checking coterie existence:", err)
+		return c.Status(fiber.StatusInternalServerError).SendString("Failed to check coterie existence")
+	}
+
+	webhookURL := os.Getenv("Report_URL")
+
+	title := "🚨 Coterie Report 🚨"
+	description := fmt.Sprintf("[Reported Coterie](https://netsocial.app/coterie/%s)", Coterie.Name)
+	reporterUsernameField := "Reporter"
+	reporterUsernameValue := reporterUsername
+	reasonField := "Reason"
+	reasonValue := reason
+
+	embed := discordwebhook.Embed{
+		Title:       &title,
+		Description: &description,
+		Fields: &[]discordwebhook.Field{
+			{
+				Name:  &reporterUsernameField,
+				Value: &reporterUsernameValue,
+			},
+			{
+				Name:  &reasonField,
+				Value: &reasonValue,
+			},
+		},
+	}
+
+	content := fmt.Sprintf("Coterie %s has been reported by %s for reason: %s", CoterieName, reporterUsername, reason)
+	message := discordwebhook.Message{
+		Content: &content,
+		Embeds:  &[]discordwebhook.Embed{embed},
+	}
+
+	err = discordwebhook.SendMessage(webhookURL, message)
+	if err != nil {
+		log.Println("Error sending message to Discord webhook:", err)
+		return c.Status(fiber.StatusInternalServerError).SendString("Failed to report coterie")
+	}
+
+	return c.SendString("Coterie reported successfully")
+}
+
+// Rate limit configuration
+
+var reportratelimit = limiter.Config{
+	Max:        5,             // Maximum number of requests
+	Expiration: 60 * 1000 * 5, // 5 minutes
+	LimitReached: func(c *fiber.Ctx) error {
+		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+			"error": "Woah! Slow down bucko! You're being rate limited!",
+		})
+	},
+}
+
+func Report(app *fiber.App) {
+	app.Post("/report/user", limiter.New(reportratelimit), ReportUser)
+	app.Post("/report/post", limiter.New(reportratelimit), ReportPost)
+	app.Post("/report/coterie", limiter.New(reportratelimit), ReportCoterie)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt"
 	"github.com/gtuk/discordwebhook"
+	"github.com/resend/resend-go/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -87,6 +88,20 @@ func FetchDisposableDomains() (map[string]bool, error) {
 	}
 
 	return disposableDomains, nil
+}
+
+func sendWelcomeEmail(email string) error {
+	apiKey := os.Getenv("RESEND_API_KEY")
+
+	client := resend.NewClient(apiKey)
+	params := &resend.SendEmailRequest{
+		From:    "Netsocial <welcome@netsocial.app>",
+		To:      []string{email},
+		Subject: "Welcome to Netsocial!",
+		Text:    "Hey, welcome to Netsocial! Let's start by making your first post. [Post Now!](https://netsocial.app/post)",
+	}
+	_, err := client.Emails.Send(params)
+	return err
 }
 
 func UserSignup(c *fiber.Ctx) error {
@@ -165,16 +180,15 @@ func UserSignup(c *fiber.Ctx) error {
 		CreatedAt:      time.Now(),
 	}
 
-	result, err := userCollection.InsertOne(context.TODO(), user)
+	// Directly insert the user into the main collection
+	_, err = userCollection.InsertOne(context.TODO(), user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
 	}
 
-	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": result.InsertedID}, bson.M{
-		"$set": bson.M{"id": result.InsertedID},
-	})
+	err = sendWelcomeEmail(email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user id"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send email. Please check your email address and try again"})
 	}
 
 	err = sendDiscordWebhook(username)
@@ -331,7 +345,6 @@ func CurrentUser(c *fiber.Ctx) error {
 		"displayname": user.DisplayName,
 		"bio":         user.Bio,
 		"createdAt":   user.CreatedAt,
-		"_id":         user.ID.Hex(),
 	})
 }
 

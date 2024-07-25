@@ -23,7 +23,7 @@ func main() {
 
 	// Create Fiber app instance
 	app := fiber.New(fiber.Config{
-		Prefork:        false,
+		Prefork:        true,
 		CaseSensitive:  true,
 		StrictRouting:  true,
 		ReadBufferSize: 100000000,
@@ -85,8 +85,6 @@ func main() {
 	app.Post("/profile/settings", routes.UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", routes.FollowUser)
 	app.Post("/unfollow/:username/:followerID", routes.UnfollowUser)
-	app.Get("/profile/:userId/image", routes.ProfilePictureHandler)
-	app.Get("/profile/:userId/banner", routes.ProfileBannerHandler)
 
 	// Rate limit configuration
 	rateLimitConfig := limiter.Config{
@@ -107,19 +105,18 @@ func main() {
 	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
 	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
-	app.Get("/posts/:postId/image", routes.PostImageHandler)
+
+	// Image
+	routes.Image(app)
 
 	// Report
-	app.Post("/report/user", limiter.New(rateLimitConfig), routes.ReportUser)
-	app.Post("/report/post", limiter.New(rateLimitConfig), routes.ReportPost)
+	routes.Report(app)
 
 	// Coterie
 	routes.CoterieRoutes(app)
 
 	// Misc
-	app.Get("/stats/posts/@all", routes.TotalPostsCount)
-	app.Get("/stats/partners/@all", routes.TotalPartnersCount)
-	app.Get("/stats/users/@all", routes.RegistergedUserNum)
+	routes.Stats(app)
 	app.Get("/blog/posts/@all", routes.GetPosts)
 	app.Get("/partners/@all", routes.GetAllPartner)
 

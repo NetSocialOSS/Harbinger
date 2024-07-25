@@ -94,11 +94,17 @@ type Coterie struct {
 	Banner          string                     `bson:"banner" json:"banner,omitempty"`
 	Avatar          string                     `bson:"avatar" json:"avatar,omitempty"`
 	TotalPosts      int                        `json:"totalPosts,omitempty"`
-	Roles           map[string]string          `bson:"roles,omitempty" json:"roles,omitempty"`
+	Roles           map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`
 	BannedMembers   []string                   `bson:"bannedMembers,omitempty" json:"bannedMembers,omitempty"`
 	MemberUsernames []string                   `json:"memberUsernames,omitempty"`
 	WarningDetails  map[string][]WarningDetail `bson:"warningDetails,omitempty" json:"warningDetails,omitempty"`
 	WarningLimit    int                        `bson:"warningLimit" json:"warningLimit"`
+}
+
+type Roles struct {
+	Owner     []string `json:"owners"`
+	Moderator []string `json:"moderators"`
+	Admin     []string `json:"admins"`
 }
 
 type WarningDetail struct {

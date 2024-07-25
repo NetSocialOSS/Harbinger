@@ -15,6 +15,7 @@ require (
 
 require (
 	github.com/philhofer/fwd v1.1.2 // indirect
+	github.com/resend/resend-go/v2 v2.10.0 // indirect
 	github.com/tinylib/msgp v1.1.8 // indirect
 )
 
