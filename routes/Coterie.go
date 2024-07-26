@@ -61,10 +61,6 @@ func GetAllCoterie(c *fiber.Ctx) error {
 	var result []map[string]interface{}
 
 	for _, coterie := range coteries {
-		ownerUsername, err := getUsername(userCollection, coterie.Owner, userIDToUsername)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
 
 		var memberUsernames []string
 		for _, memberID := range coterie.Members {
@@ -91,7 +87,6 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
-			"owner":        ownerUsername,
 			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
 		}
