@@ -61,10 +61,6 @@ func GetAllCoterie(c *fiber.Ctx) error {
 	var result []map[string]interface{}
 
 	for _, coterie := range coteries {
-		ownerUsername, err := getUsername(userCollection, coterie.Owner, userIDToUsername)
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
-		}
 
 		var memberUsernames []string
 		for _, memberID := range coterie.Members {
@@ -91,13 +87,16 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
-			"owner":        ownerUsername,
 			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
 		}
 
 		if coterie.Avatar != "" {
 			coterieMap["avatar"] = coterie.Avatar
+		}
+
+		if coterie.Banner != "" {
+			coterieMap["banner"] = coterie.Banner
 		}
 
 		result = append(result, coterieMap)
@@ -273,6 +272,13 @@ func AddNewCoterie(c *fiber.Ctx) error {
 	// Get the name and owner from query parameters
 	title := c.Query("name")
 	owner := c.Query("owner")
+
+	// Check if the title is blank
+	if title == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Coterie name cannot be blank",
+		})
+	}
 
 	// Validate the owner ObjectID
 	ownerObjectID, err := primitive.ObjectIDFromHex(owner)

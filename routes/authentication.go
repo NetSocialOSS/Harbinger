@@ -180,10 +180,16 @@ func UserSignup(c *fiber.Ctx) error {
 		CreatedAt:      time.Now(),
 	}
 
-	// Directly insert the user into the main collection
-	_, err = userCollection.InsertOne(context.TODO(), user)
+	result, err := userCollection.InsertOne(context.TODO(), user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
+	}
+
+	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": result.InsertedID}, bson.M{
+		"$set": bson.M{"id": result.InsertedID},
+	})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user id"})
 	}
 
 	err = sendWelcomeEmail(email)
