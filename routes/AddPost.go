@@ -34,6 +34,7 @@ func AddPost(c *fiber.Ctx) error {
 
 	postsCollection := db.Database("SocialFlux").Collection("posts")
 	usersCollection := db.Database("SocialFlux").Collection("users")
+	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
 
 	title := c.Query("title")
 	content := c.Query("content")
@@ -69,6 +70,29 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
+	// Check if the user is a member of the coterie
+	var coterie types.Coterie
+	err = coteriesCollection.FindOne(c.Context(), bson.M{"name": coterieName}).Decode(&coterie)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to fetch coterie information",
+		})
+	}
+
+	isMember := false
+	for _, memberID := range coterie.Members {
+		if memberID == userId {
+			isMember = true
+			break
+		}
+	}
+
+	if !isMember {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "User is not a member of the coterie",
+		})
+	}
+
 	post := types.Post{
 		ID:        generateRandomID(),
 		Title:     title,
@@ -78,7 +102,7 @@ func AddPost(c *fiber.Ctx) error {
 		Hearts:    []string{},
 		CreatedAt: time.Now(),
 		Comments:  []types.Comment{},
-		Coterie:   coterieName, // Include coterieName directly
+		Coterie:   coterieName,
 	}
 
 	_, err = postsCollection.InsertOne(c.Context(), post)
