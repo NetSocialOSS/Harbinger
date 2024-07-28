@@ -993,6 +993,71 @@ func BanUser(c *fiber.Ctx) error {
 	})
 }
 
+func GetCoteriesByUserID(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+	}
+
+	// Retrieve the parameter
+	param := c.Params("userParam")
+
+	var userID primitive.ObjectID
+	var err error
+
+	// Check if the parameter is a valid ObjectID
+	if primitive.IsValidObjectID(param) {
+		userID, err = primitive.ObjectIDFromHex(param)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user ID"})
+		}
+	} else {
+		// Treat the parameter as a username and fetch the user ID
+		userCollection := db.Database("SocialFlux").Collection("users")
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var user struct {
+			ID primitive.ObjectID `bson:"_id"`
+		}
+
+		err = userCollection.FindOne(ctx, bson.M{"username": param}).Decode(&user)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		userID = user.ID
+	}
+
+	// Fetch the coteries by user ID
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cursor, err := coterieCollection.Find(ctx, bson.M{"members": userID.Hex()})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	defer cursor.Close(ctx)
+
+	var coteries []map[string]interface{}
+	for cursor.Next(ctx) {
+		var coterie types.Coterie
+		if err := cursor.Decode(&coterie); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		}
+		coteries = append(coteries, fiber.Map{"name": coterie.Name, "Avatar": coterie.Avatar})
+	}
+
+	if err := cursor.Err(); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(coteries)
+}
+
 // Rate limit configuration
 var rateLimitConfig = limiter.Config{
 	Max:        5,             // Maximum number of requests
@@ -1009,6 +1074,7 @@ func CoterieRoutes(app *fiber.App) {
 	app.Post("/coterie/leave", limiter.New(rateLimitConfig), LeaveCoterie)
 	app.Post("/coterie/set-warning-limit", limiter.New(rateLimitConfig), SetWarningLimit)
 	app.Get("/coterie/:name", GetCoterieByName)
+	app.Get("/user/:userParam/coteries", GetCoteriesByUserID)
 	app.Post("/coterie/update", limiter.New(rateLimitConfig), UpdateCoterie)
 	app.Post("/coterie/join", limiter.New(rateLimitConfig), JoinCoterie)
 	app.Post("/coterie/promote", limiter.New(rateLimitConfig), promoteMember)
