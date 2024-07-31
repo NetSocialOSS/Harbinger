@@ -7,16 +7,20 @@ import (
 )
 
 type Post struct {
-	ID        string             `bson:"_id" json:"_id"`
-	Title     string             `bson:"title" json:"title"`
-	Content   string             `bson:"content" json:"content"`
-	Author    primitive.ObjectID `bson:"author" json:"-"`
-	ImageURL  string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
-	Image     string             `bson:"image,omitempty" json:"image,omitempty"`
-	Hearts    []string           `bson:"hearts" json:"hearts"`
-	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
-	Comments  []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
-	Coterie   string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
+	ID            string             `bson:"_id" json:"_id"`
+	Title         string             `bson:"title" json:"title"`
+	Content       string             `bson:"content" json:"content"`
+	Author        primitive.ObjectID `bson:"author" json:"-"`
+	AuthorName    string             `json:"authorName,omitempty"`
+	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
+	TimeAgo       string             `json:"timeAgo" json:"timeAgo"`
+	ImageURL      string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
+	Image         string             `bson:"image,omitempty" json:"image,omitempty"`
+	Hearts        []string           `bson:"hearts" json:"hearts"`
+	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	Comments      []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
+	Coterie       string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
+	AuthorDetails Author             `json:"authorDetails,omitempty"`
 }
 
 type NewPost struct {
@@ -31,14 +35,14 @@ type NewPost struct {
 }
 
 type UserSettingsUpdate struct {
-	DisplayName string `json:"displayName,omitempty"`
-	Bio         string `json:"bio,omitempty"`
-	Avatar      string `json:"avatar,omitempty"`
-	Banner      string `json:"banner,omitempty"`
+	DisplayName    string   `json:"displayName,omitempty"`
+	Bio            string   `json:"bio,omitempty"`
+	ProfilePicture string   `json:"profilePicture,omitempty"`
+	ProfileBanner  string   `json:"profileBanner,omitempty"`
+	Links          []string `json:"links,omitempty"`
 }
 
 type Author struct {
-	Bio            string    `bson:"bio" json:"bio"`
 	IsVerified     bool      `json:"isVerified"`
 	IsDeveloper    bool      `json:"isDeveloper"`
 	IsPartner      bool      `json:"isPartner"`

@@ -9,7 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func RegistergedUserNum(c *fiber.Ctx) error {
+func getCount(c *fiber.Ctx, collectionName string, fieldName string) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -17,59 +17,29 @@ func RegistergedUserNum(c *fiber.Ctx) error {
 		})
 	}
 
-	userCollection := db.Database("SocialFlux").Collection("users")
+	collection := db.Database("SocialFlux").Collection(collectionName)
 
 	countOptions := options.Count()
-	totaluser, err := userCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
+	total, err := collection.CountDocuments(context.Background(), bson.M{}, countOptions)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error counting registered users",
+			"error": "Error counting documents",
 		})
 	}
 
-	return c.JSON(fiber.Map{"total_registered_user": totaluser})
+	return c.JSON(fiber.Map{fieldName: total})
+}
+
+func RegistergedUserNum(c *fiber.Ctx) error {
+	return getCount(c, "users", "total_registered_user")
 }
 
 func TotalPartnersCount(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
-	}
-
-	partnerCollection := db.Database("SocialFlux").Collection("partners")
-
-	countOptions := options.Count()
-	totalpartner, err := partnerCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error counting partners",
-		})
-	}
-
-	return c.JSON(fiber.Map{"total_partner": totalpartner})
+	return getCount(c, "partners", "total_partner")
 }
 
 func TotalPostsCount(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
-	}
-
-	partnerCollection := db.Database("SocialFlux").Collection("posts")
-
-	countOptions := options.Count()
-	totalpartner, err := partnerCollection.CountDocuments(context.Background(), bson.M{}, countOptions)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error counting posts",
-		})
-	}
-
-	return c.JSON(fiber.Map{"total_posts": totalpartner})
+	return getCount(c, "posts", "total_posts")
 }
 
 func Stats(app *fiber.App) {

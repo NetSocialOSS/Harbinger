@@ -76,7 +76,6 @@ func GetPostById(c *fiber.Ctx) error {
 
 		// Construct each comment with author's details
 		commentData := types.Comment{
-			ID:             comment.ID,
 			Content:        comment.Content,
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
@@ -117,6 +116,16 @@ func GetPostById(c *fiber.Ctx) error {
 func TimeAgo(createdAt time.Time) string {
 	now := time.Now().UTC()
 	diff := now.Sub(createdAt)
+
+	years := int(diff.Hours() / 24 / 365)
+	if years > 0 {
+		return fmt.Sprintf("%d years ago", years)
+	}
+
+	months := int(diff.Hours() / 24 / 30)
+	if months > 0 {
+		return fmt.Sprintf("%d months ago", months)
+	}
 
 	days := int(diff.Hours() / 24)
 	if days > 0 {

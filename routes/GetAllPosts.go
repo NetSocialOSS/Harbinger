@@ -5,47 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"netsocial/types"
+
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-// Define Post structure
-type Post struct {
-	ID            string             `bson:"_id" json:"_id"`
-	Title         string             `bson:"title" json:"title"`
-	Content       string             `bson:"content" json:"content"`
-	AuthorID      primitive.ObjectID `bson:"author" json:"-"`
-	Author        Author             `bson:"-" json:"author"`
-	ImageURL      string             `bson:"imageUrl" json:"imageUrl"`
-	Hearts        []string           `bson:"hearts" json:"hearts"`
-	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
-	Comments      []Comment          `bson:"comments" json:"comments"`
-	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
-}
-
-// Define Comment structure
-type Comment struct {
-	Content    string             `bson:"content" json:"content"`
-	Replies    []string           `bson:"replies" json:"replies"`
-	ID         string             `bson:"_id" json:"_id"`
-	Author     primitive.ObjectID `bson:"author" json:"-"`
-	AuthorName string             `bson:"-" json:"author"`
-}
-
-// Define Author structure
-type Author struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"-"`
-	IsVerified     bool               `json:"isVerified"`
-	IsOrganisation bool               `json:"isOrganisation"`
-	IsDeveloper    bool               `json:"isDeveloper"`
-	IsPartner      bool               `json:"isPartner"`
-	IsOwner        bool               `json:"isOwner"`
-	Username       string             `bson:"username" json:"username"`
-}
 
 func GetAllPosts(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
@@ -69,7 +36,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 	}
 	defer cursor.Close(ctx)
 
-	var posts []Post
+	var posts []types.Post
 	if err := cursor.All(ctx, &posts); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -78,21 +45,17 @@ func GetAllPosts(c *fiber.Ctx) error {
 	userCache := make(map[primitive.ObjectID]string)
 
 	for i, post := range posts {
-		var author Author
-		err := usersCollection.FindOne(ctx, bson.M{"_id": post.AuthorID}).Decode(&author)
+		var author types.Author
+		err := usersCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
 			// Handle error (author not found)
-			posts[i].Author = Author{} // or set to default if necessary
+			posts[i].Author = primitive.ObjectID{} // or set to default if necessary
 			continue
 		}
 
-		posts[i].Author.ID = post.AuthorID
-		posts[i].Author.Username = author.Username
-		posts[i].Author.IsVerified = author.IsVerified
-		posts[i].Author.IsOrganisation = author.IsOrganisation
-		posts[i].Author.IsDeveloper = author.IsDeveloper
-		posts[i].Author.IsOwner = author.IsOwner
-		posts[i].Author.IsPartner = author.IsPartner
+		posts[i].Author = post.Author
+		posts[i].AuthorName = author.Username
+		posts[i].AuthorDetails = author // Set the author details
 
 		// Calculate time ago
 		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
@@ -102,7 +65,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 		// Update comments with author usernames
 		for j, comment := range posts[i].Comments {
-			var commenter Author
+			var commenter types.Author
 			err := usersCollection.FindOne(ctx, bson.M{"_id": comment.Author}).Decode(&commenter)
 			if err != nil {
 				// Handle error (commenter not found)
@@ -123,7 +86,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 			// Check if the username is already in the cache
 			username, found := userCache[userID]
 			if !found {
-				var heartAuthor Author
+				var heartAuthor types.Author
 				err := usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&heartAuthor)
 				if err != nil {
 					// Handle error (user not found)
@@ -144,6 +107,16 @@ func GetAllPosts(c *fiber.Ctx) error {
 func calculateTimeAgo(createdAt time.Time) string {
 	now := time.Now().UTC()
 	diff := now.Sub(createdAt)
+
+	years := int(diff.Hours() / 24 / 365)
+	if years > 0 {
+		return fmt.Sprintf("%d years ago", years)
+	}
+
+	months := int(diff.Hours() / 24 / 30)
+	if months > 0 {
+		return fmt.Sprintf("%d months ago", months)
+	}
 
 	days := int(diff.Hours() / 24)
 	if days > 0 {

@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"net/url"
+	"netsocial/types"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,14 +12,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-type UserSettingsUpdate struct {
-	DisplayName    string   `json:"displayName,omitempty"`
-	Bio            string   `json:"bio,omitempty"`
-	ProfilePicture string   `json:"profilePicture,omitempty"`
-	ProfileBanner  string   `json:"profileBanner,omitempty"`
-	Links          []string `json:"links,omitempty"`
-}
 
 func UpdateProfileSettings(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
@@ -43,7 +36,7 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	}
 
 	// Retrieve update parameters from both query and request body
-	var updateParams UserSettingsUpdate
+	var updateParams types.UserSettingsUpdate
 
 	// Helper function to decode URL-encoded values
 	decodeIfNotEmpty := func(value string) string {
