@@ -87,6 +87,7 @@ func GetAllCoterie(c *fiber.Ctx) error {
 			"name":         coterie.Name,
 			"description":  coterie.Description,
 			"createdAt":    coterie.CreatedAt,
+			"isVerified":   coterie.IsVerified,
 			"TotalMembers": len(memberUsernames),
 			"PostsCount":   postCount,
 		}
@@ -216,12 +217,13 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		}
 
 		postMap := map[string]interface{}{
-			"_id":       post.ID,
-			"title":     post.Title,
-			"content":   post.Content,
-			"hearts":    heartsUsernames,
-			"createdAt": post.CreatedAt,
-			"coterie":   post.Coterie,
+			"_id":        post.ID,
+			"title":      post.Title,
+			"content":    post.Content,
+			"hearts":     heartsUsernames,
+			"isVerified": coterie.IsVerified,
+			"createdAt":  post.CreatedAt,
+			"coterie":    post.Coterie,
 			"author": map[string]interface{}{
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
@@ -1048,7 +1050,7 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 		if err := cursor.Decode(&coterie); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		coteries = append(coteries, fiber.Map{"name": coterie.Name, "Avatar": coterie.Avatar})
+		coteries = append(coteries, fiber.Map{"name": coterie.Name, "Avatar": coterie.Avatar, "isVerified": coterie.IsVerified})
 	}
 
 	if err := cursor.Err(); err != nil {
