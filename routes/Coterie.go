@@ -153,26 +153,6 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		memberUsernames = append(memberUsernames, memberUsername)
 	}
 
-	// Fetch role usernames
-	roleUsernames := make(map[string][]string)
-	for role, ids := range coterie.Roles {
-		var usernames []string
-		for _, id := range ids {
-			objectID, err := primitive.ObjectIDFromHex(id)
-			if err != nil {
-				usernames = append(usernames, "Invalid ID")
-				continue
-			}
-			username, err := getUsername(userCollection, objectID, userIDToUsername)
-			if err != nil {
-				usernames = append(usernames, "Unknown User")
-				continue
-			}
-			usernames = append(usernames, username)
-		}
-		roleUsernames[role] = usernames
-	}
-
 	// Fetch total post count
 	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
 	if err != nil {
@@ -245,13 +225,21 @@ func GetCoterieByName(c *fiber.Ctx) error {
 	result := map[string]interface{}{
 		"name":         coterie.Name,
 		"description":  coterie.Description,
-		"WarningLimit": coterie.WarningLimit,
 		"members":      memberUsernames,
 		"owner":        ownerUsername,
+		"isVerified":   coterie.IsVerified,
 		"createdAt":    coterie.CreatedAt,
 		"TotalMembers": len(memberUsernames),
-		"roles":        roleUsernames,
 		"Post":         posts,
+	}
+
+	// Conditionally add avatar and banner
+	if coterie.Avatar != "" {
+		result["avatar"] = coterie.Avatar
+	}
+
+	if coterie.Banner != "" {
+		result["banner"] = coterie.Banner
 	}
 
 	return c.Status(fiber.StatusOK).JSON(result)

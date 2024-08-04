@@ -14,8 +14,7 @@ type Post struct {
 	AuthorName    string             `json:"authorName,omitempty"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
 	TimeAgo       string             `json:"timeAgo" json:"timeAgo"`
-	ImageURL      string             `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
-	Image         string             `bson:"image,omitempty" json:"image,omitempty"`
+	Image         string             `bson:"image" json:"image"`
 	Hearts        []string           `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
 	Comments      []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
@@ -29,8 +28,9 @@ type NewPost struct {
 	Content   string             `json:"content"`
 	Author    primitive.ObjectID `json:"author"`
 	Image     string             `json:"image,omitempty"`
+	Coterie   string             `json:"coterie"`
 	Hearts    []string           `json:"hearts,omitempty"`
-	CreatedAt time.Time          `json:"createdAt"`
+	CreatedAt time.Time          `json:"createdAt" bson:"createdAt"`
 	Comments  []string           `json:"comments,omitempty" bson:"comments,omitempty"`
 }
 
