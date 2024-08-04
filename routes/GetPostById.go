@@ -106,7 +106,7 @@ func GetPostById(c *fiber.Ctx) error {
 		"createdAt": post.CreatedAt,
 		"hearts":    post.Hearts,
 		"comments":  comments, // Use the updated comments data
-		"imageUrl":  post.ImageURL,
+		"image":     post.Image,
 	}
 
 	return c.JSON(responseData)

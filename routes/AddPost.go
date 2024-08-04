@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"context"
 	"math/rand"
 	"net/http"
 	"time"
@@ -13,15 +14,26 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// Generate a random string ID
-func generateRandomID() string {
+func generateUniqueID(collection *mongo.Collection) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = charset[seededRand.Intn(len(charset))]
+
+	for {
+		b := make([]byte, 8)
+		for i := range b {
+			b[i] = charset[seededRand.Intn(len(charset))]
+		}
+		id := string(b)
+
+		// Check if the ID already exists
+		count, err := collection.CountDocuments(context.Background(), bson.M{"_id": id})
+		if err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return id, nil
+		}
 	}
-	return string(b)
 }
 
 func AddPost(c *fiber.Ctx) error {
@@ -70,38 +82,47 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Check if the user is a member of the coterie
-	var coterie types.Coterie
-	err = coteriesCollection.FindOne(c.Context(), bson.M{"name": coterieName}).Decode(&coterie)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch coterie information",
-		})
-	}
+	if coterieName != "" {
+		// Check if the user is a member of the coterie
+		var coterie types.Coterie
+		err = coteriesCollection.FindOne(c.Context(), bson.M{"name": coterieName}).Decode(&coterie)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": "Failed to fetch coterie information",
+			})
+		}
 
-	isMember := false
-	for _, memberID := range coterie.Members {
-		if memberID == userId {
-			isMember = true
-			break
+		isMember := false
+		for _, memberID := range coterie.Members {
+			if memberID == userId {
+				isMember = true
+				break
+			}
+		}
+
+		if !isMember {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+				"error": "User is not a member of the coterie",
+			})
 		}
 	}
 
-	if !isMember {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "User is not a member of the coterie",
+	// Generate a unique post ID
+	postID, err := generateUniqueID(postsCollection)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to generate unique post ID",
 		})
 	}
 
-	post := types.Post{
-		ID:        generateRandomID(),
+	post := types.NewPost{
+		ID:        postID,
 		Title:     title,
 		Content:   content,
 		Author:    authorID,
 		Image:     image,
 		Hearts:    []string{},
 		CreatedAt: time.Now(),
-		Comments:  []types.Comment{},
 		Coterie:   coterieName,
 	}
 
