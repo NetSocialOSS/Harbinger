@@ -53,7 +53,7 @@ type Author struct {
 }
 
 type Comment struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"_id,omitempty"`
+	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Content        string             `bson:"content" json:"content"`
 	Author         primitive.ObjectID `bson:"author" json:"-"`
 	IsVerified     bool               `json:"isVerified"`

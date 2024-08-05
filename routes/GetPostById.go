@@ -9,6 +9,7 @@ import (
 
 	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -36,7 +37,7 @@ func GetPostById(c *fiber.Ctx) error {
 		"author":    1,
 		"createdAt": 1,
 		"hearts":    1,
-		"imageUrl":  1,
+		"image":     1, // Updated field to "image"
 		"comments": bson.M{
 			"$elemMatch": bson.M{}, // Only include the first matching comment
 		},
@@ -76,6 +77,7 @@ func GetPostById(c *fiber.Ctx) error {
 
 		// Construct each comment with author's details
 		commentData := types.Comment{
+			ID:             comment.ID,
 			Content:        comment.Content,
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
@@ -86,6 +88,24 @@ func GetPostById(c *fiber.Ctx) error {
 			Replies:        comment.Replies,
 		}
 		comments = append(comments, commentData)
+	}
+
+	// Update hearts with author usernames
+	var hearts []string
+	for _, heartID := range post.Hearts {
+		heartObjectID, err := primitive.ObjectIDFromHex(heartID)
+		if err != nil {
+			hearts = append(hearts, "Unknown")
+			continue
+		}
+
+		var heartAuthor types.Author
+		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": heartObjectID}).Decode(&heartAuthor); err != nil {
+			hearts = append(hearts, "Unknown")
+			continue
+		}
+
+		hearts = append(hearts, heartAuthor.Username)
 	}
 
 	// Construct the response data
@@ -104,9 +124,13 @@ func GetPostById(c *fiber.Ctx) error {
 			"createdAt":      author.CreatedAt,
 		},
 		"createdAt": post.CreatedAt,
-		"hearts":    post.Hearts,
-		"comments":  comments, // Use the updated comments data
-		"image":     post.Image,
+		"hearts":    hearts,
+		"comments":  comments,
+	}
+
+	// Add image field if it is not empty
+	if post.Image != "" {
+		responseData["image"] = post.Image
 	}
 
 	return c.JSON(responseData)
