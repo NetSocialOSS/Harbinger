@@ -16,9 +16,22 @@ import (
 )
 
 func main() {
-	// Load environment variables from .env file
-	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env file")
+	// Attempt to load environment variables from .env file
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Warning: .env file not found or could not be loaded.")
+	}
+
+	// Fetch environment variables, fallback to environment directly if needed
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL environment variable not set")
+	}
+
+	// Additional environment variables (if needed)
+	discordWebhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
+	if discordWebhookURL == "" {
+		log.Println("DISCORD_WEBHOOK_URL environment variable not set")
 	}
 
 	// Create Fiber app instance
@@ -46,7 +59,7 @@ func main() {
 	}))
 
 	// Middleware: Database Connection
-	db, err := database.Connect(os.Getenv("DATABASE_URL"))
+	db, err := database.Connect(dbURL)
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
