@@ -159,8 +159,8 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Fetch posts
-	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name})
+	// Fetch posts, sorted by creation date in descending order
+	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{"createdAt", -1}}))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -202,8 +202,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			"content":    post.Content,
 			"hearts":     heartsUsernames,
 			"isVerified": coterie.IsVerified,
-			"createdAt":  post.CreatedAt,
-			"coterie":    post.Coterie,
+			"createdAt":  calculateTimeAgo(post.CreatedAt),
 			"author": map[string]interface{}{
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
@@ -228,6 +227,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		"members":      memberUsernames,
 		"owner":        ownerUsername,
 		"isVerified":   coterie.IsVerified,
+		"TotalPosts":   len(posts),
 		"createdAt":    coterie.CreatedAt,
 		"TotalMembers": len(memberUsernames),
 		"Post":         posts,
