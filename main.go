@@ -94,10 +94,7 @@ func main() {
 	routes.RegisterAuthRoutes(app)
 
 	// Users
-	app.Get("/user/:username", routes.GetUserByName)
-	app.Post("/profile/settings", routes.UpdateProfileSettings)
-	app.Post("/follow/:username/:followerID", routes.FollowUser)
-	app.Post("/unfollow/:username/:followerID", routes.UnfollowUser)
+	routes.User(app)
 
 	// Rate limit configuration
 	rateLimitConfig := limiter.Config{
