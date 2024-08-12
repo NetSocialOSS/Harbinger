@@ -42,8 +42,13 @@ func TotalPostsCount(c *fiber.Ctx) error {
 	return getCount(c, "posts", "total_posts")
 }
 
+func TotalCoterieCount(c *fiber.Ctx) error {
+	return getCount(c, "coterie", "total_coteries")
+}
+
 func Stats(app *fiber.App) {
 	app.Get("/stats/posts/@all", TotalPostsCount)
+	app.Get("/stats/coterie/@all", TotalCoterieCount)
 	app.Get("/stats/partners/@all", TotalPartnersCount)
 	app.Get("/stats/users/@all", RegistergedUserNum)
 }
