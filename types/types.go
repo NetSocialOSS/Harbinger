@@ -146,7 +146,7 @@ type Partner struct {
  */
 
 type Config struct {
-	ApiVersion int `json:"apiVersion"`
+	ApiVersion string `json:"apiVersion"`
 	Database   `json:"database"`
 	Web        `json:"web"`
 }
