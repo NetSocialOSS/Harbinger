@@ -19,6 +19,7 @@ import (
 	"github.com/gtuk/discordwebhook"
 	"github.com/resend/resend-go/v2"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
@@ -35,9 +36,9 @@ func generateRandomString(length int) string {
 	return base64.URLEncoding.EncodeToString(bytes)[:length]
 }
 
-func generateJWT(userID int) (string, error) {
+func generateJWT(userID primitive.ObjectID) (string, error) {
 	claims := jwt.MapClaims{
-		"user_id": userID,
+		"user_id": userID.Hex(),
 		"exp":     time.Now().Add(time.Hour * 7628).Unix(),
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
@@ -66,7 +67,12 @@ func authMiddleware(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token claims"})
 	}
 
-	c.Locals("user_id", int(claims["user_id"].(float64)))
+	userID, err := primitive.ObjectIDFromHex(claims["user_id"].(string))
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token claims"})
+	}
+
+	c.Locals("user_id", userID)
 	return c.Next()
 }
 
@@ -277,7 +283,7 @@ func UserLogin(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
 	}
 
-	token, err := generateJWT(user.UserID)
+	token, err := generateJWT(user.ID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
@@ -337,10 +343,14 @@ func CurrentUser(c *fiber.Ctx) error {
 	}
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	userID := c.Locals("user_id").(int)
+	// Extract user ID from JWT claims (should be a primitive.ObjectID)
+	userID, ok := c.Locals("user_id").(primitive.ObjectID)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid user ID"})
+	}
 
 	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{"userid": userID}).Decode(&user)
+	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to find user"})
 	}
@@ -348,16 +358,77 @@ func CurrentUser(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"_id":         user.ID,
 		"username":    user.Username,
-		"email":       user.Email,
 		"displayname": user.DisplayName,
-		"bio":         user.Bio,
-		"createdAt":   user.CreatedAt,
 	})
+}
+
+func ChangePassword(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+	}
+	userCollection := db.Database("SocialFlux").Collection("users")
+
+	// Extract user ID from JWT claims (should be a primitive.ObjectID)
+	userID, ok := c.Locals("user_id").(primitive.ObjectID)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid user ID"})
+	}
+
+	// Get old password, new password, and confirmation from the query parameters
+	oldPassword := c.Query("old_password")
+	newPassword := c.Query("new_password")
+	confirmPassword := c.Query("confirm_password")
+
+	if oldPassword == "" || newPassword == "" || confirmPassword == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required fields"})
+	}
+
+	// Check if the new password meets the minimum length requirement
+	if len(newPassword) < 8 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New password must be at least 8 characters long"})
+	}
+
+	if newPassword != confirmPassword {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New password and confirmation do not match"})
+	}
+
+	// Find the user in the database using ObjectID
+	var user types.User
+	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+	}
+
+	// Verify the old password
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword))
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Old password is incorrect"})
+	}
+
+	// Hash the new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+	}
+
+	// Update the password in the database
+	_, err = userCollection.UpdateOne(
+		context.TODO(),
+		bson.M{"_id": userID},
+		bson.M{"$set": bson.M{"password": string(hashedPassword)}},
+	)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update password"})
+	}
+
+	return c.JSON(fiber.Map{"message": "Password updated successfully"})
 }
 
 func RegisterAuthRoutes(app *fiber.App) {
 	app.Get("/auth/signup", UserSignup)
 	app.Get("/auth/login", UserLogin)
+	app.Post("/auth/change-password", authMiddleware, ChangePassword)
 	app.Post("/auth/logout", UserLogout)
 	app.Get("/auth/@me", authMiddleware, CurrentUser)
 }
