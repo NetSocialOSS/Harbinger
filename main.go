@@ -80,8 +80,8 @@ func main() {
 	// Routes
 	app.Get("/", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{
-			"message": "Hello, World!",
-			"version": "2.0.0",
+			"message": "Hello, World from Net Social!",
+			"version": configuration.GetConfig().ApiVersion,
 			"author":  "Ranveer Soni",
 			"links": fiber.Map{
 				"status": "https://status.netsocial.app",
@@ -91,7 +91,7 @@ func main() {
 	})
 
 	// Authentication
-	routes.RegisterAuthRoutes(app)
+	routes.Auth(app)
 
 	// Users
 	routes.User(app)
