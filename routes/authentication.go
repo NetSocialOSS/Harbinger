@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/golang-jwt/jwt"
 	"github.com/gtuk/discordwebhook"
 	"github.com/resend/resend-go/v2"
@@ -425,10 +426,10 @@ func ChangePassword(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Password updated successfully"})
 }
 
-func RegisterAuthRoutes(app *fiber.App) {
-	app.Get("/auth/signup", UserSignup)
-	app.Get("/auth/login", UserLogin)
-	app.Post("/auth/change-password", authMiddleware, ChangePassword)
+func Auth(app *fiber.App) {
+	app.Get("/auth/signup", limiter.New(rateLimitConfig), UserSignup)
+	app.Get("/auth/login", limiter.New(rateLimitConfig), UserLogin)
+	app.Post("/auth/change-password", limiter.New(rateLimitConfig), authMiddleware, ChangePassword)
 	app.Post("/auth/logout", UserLogout)
 	app.Get("/auth/@me", authMiddleware, CurrentUser)
 }

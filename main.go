@@ -91,7 +91,7 @@ func main() {
 	})
 
 	// Authentication
-	routes.RegisterAuthRoutes(app)
+	routes.Auth(app)
 
 	// Users
 	routes.User(app)
