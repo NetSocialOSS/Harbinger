@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"netsocial/types"
@@ -115,12 +116,20 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
+	// Split and filter image URLs directly here
+	imageArray := []string{}
+	if image != "" {
+		imageArray = strings.FieldsFunc(image, func(r rune) bool {
+			return r == ','
+		})
+	}
+
 	post := types.NewPost{
 		ID:        postID,
 		Title:     title,
 		Content:   content,
 		Author:    authorID,
-		Image:     image,
+		Image:     imageArray,
 		Hearts:    []string{},
 		CreatedAt: time.Now(),
 		Coterie:   coterieName,
@@ -133,5 +142,7 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(http.StatusCreated).JSON(post)
+	return c.Status(http.StatusCreated).JSON(fiber.Map{
+		"message": "Post successfully created!",
+	})
 }

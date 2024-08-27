@@ -27,7 +27,7 @@ type NewPost struct {
 	Title     string             `json:"title"`
 	Content   string             `json:"content"`
 	Author    primitive.ObjectID `json:"author"`
-	Image     string             `json:"image,omitempty"`
+	Image     []string           `json:"image,omitempty"`
 	Coterie   string             `json:"coterie"`
 	Hearts    []string           `json:"hearts,omitempty"`
 	CreatedAt time.Time          `json:"createdAt" bson:"createdAt"`
