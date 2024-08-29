@@ -116,23 +116,26 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Split and filter image URLs directly here
-	imageArray := []string{}
-	if image != "" {
-		imageArray = strings.FieldsFunc(image, func(r rune) bool {
-			return r == ','
-		})
+	// Create the post document
+	post := bson.M{
+		"_id":       postID,
+		"title":     title,
+		"content":   content,
+		"author":    authorID,
+		"hearts":    []string{},
+		"createdAt": time.Now(),
 	}
 
-	post := types.NewPost{
-		ID:        postID,
-		Title:     title,
-		Content:   content,
-		Author:    authorID,
-		Image:     imageArray,
-		Hearts:    []string{},
-		CreatedAt: time.Now(),
-		Coterie:   coterieName,
+	if coterieName != "" {
+		post["coterie"] = coterieName
+	}
+
+	// Add the Image field only if image URLs are provided
+	if image != "" {
+		imageArray := strings.FieldsFunc(image, func(r rune) bool {
+			return r == ','
+		})
+		post["image"] = imageArray
 	}
 
 	_, err = postsCollection.InsertOne(c.Context(), post)
