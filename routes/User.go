@@ -154,7 +154,7 @@ func GetUserByName(c *fiber.Ctx) error {
 	// Fetch posts made by the user without comments, sorted by createdAt in descending order
 	var posts []map[string]interface{}
 	postCollection := db.Database("SocialFlux").Collection("posts")
-	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{"createdAt", -1}}))
+	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
 	}
