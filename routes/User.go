@@ -152,7 +152,7 @@ func GetUserByName(c *fiber.Ctx) error {
 	}
 
 	// Fetch posts made by the user without comments, sorted by createdAt in descending order
-	var posts []types.Post
+	var posts []map[string]interface{}
 	postCollection := db.Database("SocialFlux").Collection("posts")
 	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{"createdAt", -1}}))
 	if err != nil {
@@ -186,9 +186,17 @@ func GetUserByName(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
 		}
 
+		// Fetch author details
+		var author types.User
+		err = userCollection.FindOne(context.Background(), bson.M{"_id": post.Author}).Decode(&author)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching author data"})
+		}
+
 		// Replace user IDs in hearts with usernames
-		for i, heart := range post.Hearts {
-			heartID, err := primitive.ObjectIDFromHex(heart)
+		var hearts []string
+		for _, heartIDHex := range post.Hearts {
+			heartID, err := primitive.ObjectIDFromHex(heartIDHex)
 			if err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid heart ID"})
 			}
@@ -196,12 +204,28 @@ func GetUserByName(c *fiber.Ctx) error {
 			if err != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching heart user data"})
 			}
-			post.Hearts[i] = username
+			hearts = append(hearts, username)
 		}
 
-		// Exclude comments from the post
-		post.Comments = nil
-		posts = append(posts, post)
+		// Construct the post response data
+		postData := map[string]interface{}{
+			"_id":     post.ID,
+			"title":   post.Title,
+			"content": post.Content,
+			"authorDetails": map[string]interface{}{
+				"username":       author.Username,
+				"isVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"isDeveloper":    author.IsDeveloper,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
+			},
+			"image":         post.Image,
+			"createdAt":     post.CreatedAt,
+			"hearts":        hearts,
+			"commentNumber": len(post.Comments),
+		}
+		posts = append(posts, postData)
 	}
 
 	// Convert followers and following from IDs to usernames

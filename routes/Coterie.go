@@ -197,13 +197,14 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		}
 
 		postMap := map[string]interface{}{
-			"_id":        post.ID,
-			"title":      post.Title,
-			"content":    post.Content,
-			"hearts":     heartsUsernames,
-			"isVerified": coterie.IsVerified,
-			"createdAt":  calculateTimeAgo(post.CreatedAt),
-			"author": map[string]interface{}{
+			"_id":           post.ID,
+			"title":         post.Title,
+			"content":       post.Content,
+			"image":         post.Image,
+			"hearts":        heartsUsernames,
+			"timeAgo":       calculateTimeAgo(post.CreatedAt),
+			"commentNumber": len(post.Comments),
+			"authorDetails": map[string]interface{}{
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
 				"isDeveloper":    author.IsDeveloper,
