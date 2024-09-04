@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/rand"
 	"net/http"
+	"strings"
 	"time"
 
 	"netsocial/types"
@@ -115,15 +116,26 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	post := types.NewPost{
-		ID:        postID,
-		Title:     title,
-		Content:   content,
-		Author:    authorID,
-		Image:     image,
-		Hearts:    []string{},
-		CreatedAt: time.Now(),
-		Coterie:   coterieName,
+	// Create the post document
+	post := bson.M{
+		"_id":       postID,
+		"title":     title,
+		"content":   content,
+		"author":    authorID,
+		"hearts":    []string{},
+		"createdAt": time.Now(),
+	}
+
+	if coterieName != "" {
+		post["coterie"] = coterieName
+	}
+
+	// Add the Image field only if image URLs are provided
+	if image != "" {
+		imageArray := strings.FieldsFunc(image, func(r rune) bool {
+			return r == ','
+		})
+		post["image"] = imageArray
 	}
 
 	_, err = postsCollection.InsertOne(c.Context(), post)
@@ -133,5 +145,7 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(http.StatusCreated).JSON(post)
+	return c.Status(http.StatusCreated).JSON(fiber.Map{
+		"message": "Post successfully created!",
+	})
 }

@@ -427,7 +427,7 @@ func ChangePassword(c *fiber.Ctx) error {
 }
 
 func Auth(app *fiber.App) {
-	app.Get("/auth/signup", limiter.New(rateLimitConfig), UserSignup)
+	app.Post("/auth/signup", limiter.New(rateLimitConfig), UserSignup)
 	app.Get("/auth/login", limiter.New(rateLimitConfig), UserLogin)
 	app.Post("/auth/change-password", limiter.New(rateLimitConfig), authMiddleware, ChangePassword)
 	app.Post("/auth/logout", UserLogout)

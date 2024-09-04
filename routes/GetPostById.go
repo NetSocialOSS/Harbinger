@@ -129,7 +129,7 @@ func GetPostById(c *fiber.Ctx) error {
 	}
 
 	// Add image field if it is not empty
-	if post.Image != "" {
+	if len(post.Image) > 0 {
 		responseData["image"] = post.Image
 	}
 
