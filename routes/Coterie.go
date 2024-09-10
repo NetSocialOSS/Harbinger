@@ -805,6 +805,7 @@ func promoteMember(c *fiber.Ctx) error {
 	role := c.FormValue("role")
 	memberName := c.FormValue("MemberName")
 	promoterIDStr := c.FormValue("PromoterID")
+	action := c.FormValue("action") // Added parameter to specify 'promote' or 'remove'
 
 	// Convert promoterIDStr to ObjectID
 	promoterID, err := primitive.ObjectIDFromHex(promoterIDStr)
@@ -825,31 +826,63 @@ func promoteMember(c *fiber.Ctx) error {
 		})
 	}
 
-	// Update coterie document based on role
+	// Update coterie document based on role and action
 	filter := bson.M{"name": coterieName}
 	update := bson.M{}
 
 	switch role {
 	case "Admin":
-		update = bson.M{"$push": bson.M{"roles.admins": member.ID.Hex()}}
+		if action == "promote" {
+			update = bson.M{"$push": bson.M{"roles.admins": member.ID.Hex()}}
+		} else if action == "demote" {
+			update = bson.M{"$pull": bson.M{"roles.admins": member.ID.Hex()}}
+		} else {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid action specified",
+			})
+		}
 	case "Moderator":
-		update = bson.M{"$push": bson.M{"roles.moderators": member.ID.Hex()}}
+		if action == "promote" {
+			update = bson.M{"$push": bson.M{"roles.moderators": member.ID.Hex()}}
+		} else if action == "demote" {
+			update = bson.M{"$pull": bson.M{"roles.moderators": member.ID.Hex()}}
+		} else {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid action specified",
+			})
+		}
 	case "Owner":
-		// Only the current owner can promote a new owner
-		var coterie types.Coterie
-		err := coterieCollection.FindOne(context.TODO(), filter).Decode(&coterie)
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Coterie not found",
+		if action == "promote" {
+			// Only the current owner can promote a new owner
+			var coterie types.Coterie
+			err := coterieCollection.FindOne(context.TODO(), filter).Decode(&coterie)
+			if err != nil {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+					"error": "Coterie not found",
+				})
+			}
+			if coterie.Owner != promoterID {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "Only the current owner can promote a new owner",
+				})
+			}
+			update = bson.M{
+				"$push": bson.M{"roles.owners": member.ID.Hex()},
+			}
+		} else if action == "demote" {
+			var coterie types.Coterie
+			if coterie.Owner == member.ID {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": "Cannot remove the current owner",
+				})
+			}
+			update = bson.M{
+				"$pull": bson.M{"roles.owners": member.ID.Hex()},
+			}
+		} else {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid action specified",
 			})
-		}
-		if coterie.Owner != promoterID {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"error": "Only the current owner can promote a new owner",
-			})
-		}
-		update = bson.M{
-			"$push": bson.M{"roles.owners": member.ID.Hex()},
 		}
 	default:
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -866,7 +899,7 @@ func promoteMember(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"message": fmt.Sprintf("Successfully promoted %s to %s in coterie %s", memberName, role, coterieName),
+		"message": fmt.Sprintf("Successfully %s %s as %s in coterie %s", action, memberName, role, coterieName),
 	})
 }
 
@@ -985,12 +1018,13 @@ func BanUser(c *fiber.Ctx) error {
 }
 
 func GetCoteriesByUserID(c *fiber.Ctx) error {
+	// Retrieve the database client from the context
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 
-	// Retrieve the parameter
+	// Retrieve the parameter from the request
 	param := c.Params("userParam")
 
 	var userID primitive.ObjectID
@@ -1027,6 +1061,7 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// Find coteries where the user is a member
 	cursor, err := coterieCollection.Find(ctx, bson.M{"members": userID.Hex()})
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
@@ -1035,18 +1070,176 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 
 	var coteries []map[string]interface{}
 	for cursor.Next(ctx) {
-		var coterie types.Coterie
+		var coterie struct {
+			Name       string             `bson:"name"`
+			Avatar     string             `bson:"avatar"`
+			IsVerified bool               `bson:"isVerified"`
+			Owner      primitive.ObjectID `bson:"owner"`
+			Roles      struct {
+				Admins     []string `bson:"admins"`
+				Moderators []string `bson:"moderators"`
+				Owners     []string `bson:"owners"`
+			} `bson:"roles"`
+		}
+
 		if err := cursor.Decode(&coterie); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
-		coteries = append(coteries, fiber.Map{"name": coterie.Name, "Avatar": coterie.Avatar, "isVerified": coterie.IsVerified})
+
+		// Determine user roles in the coterie
+		isOwner := coterie.Owner == userID
+		isAdmin := contains(coterie.Roles.Admins, userID.Hex())
+		isModerator := contains(coterie.Roles.Moderators, userID.Hex())
+
+		coteries = append(coteries, fiber.Map{
+			"name":        coterie.Name,
+			"avatar":      coterie.Avatar,
+			"isVerified":  coterie.IsVerified,
+			"isOwner":     isOwner,
+			"isAdmin":     isAdmin,
+			"isModerator": isModerator,
+		})
 	}
 
 	if err := cursor.Err(); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
+	// Return the list of coteries
 	return c.Status(fiber.StatusOK).JSON(coteries)
+}
+
+// Helper function to check if a slice contains a specific value
+func contains(slice []string, value string) bool {
+	for _, item := range slice {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+func RemovePostFromCoterie(c *fiber.Ctx) error {
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+
+	coterieCollection := db.Database("SocialFlux").Collection("coterie")
+	postCollection := db.Database("SocialFlux").Collection("posts")
+	userCollection := db.Database("SocialFlux").Collection("users")
+
+	// Parse request parameters
+	coterieName := c.Query("coterie")
+	postIDStr := c.Query("postID")
+	modIDStr := c.Query("modID")
+
+	modID, err := primitive.ObjectIDFromHex(modIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid moderator ID",
+		})
+	}
+
+	// Fetch coterie details
+	var coterie types.Coterie
+	err = coterieCollection.FindOne(context.Background(), bson.M{"name": coterieName}).Decode(&coterie)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Coterie not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching coterie: " + err.Error(),
+		})
+	}
+
+	// Fetch post details
+	var post types.Post
+	err = postCollection.FindOne(context.Background(), bson.M{"_id": postIDStr}).Decode(&post)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Post not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching post: " + err.Error(),
+		})
+	}
+
+	// Check if the post belongs to the specified coterie
+	if post.Coterie != coterieName {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Post does not belong to the specified coterie",
+		})
+	}
+
+	// Fetch user details
+	var mod types.User
+	err = userCollection.FindOne(context.Background(), bson.M{"_id": modID}).Decode(&mod)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Moderator not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error fetching moderator: " + err.Error(),
+		})
+	}
+
+	// Check if the modID is an authorized moderator or owner
+	isAuthorized := false
+	for _, ownerID := range coterie.Roles["owners"] {
+		if ownerID == modIDStr {
+			isAuthorized = true
+			break
+		}
+	}
+	if !isAuthorized {
+		for _, adminID := range coterie.Roles["admins"] {
+			if adminID == modIDStr {
+				isAuthorized = true
+				break
+			}
+		}
+	}
+	if !isAuthorized {
+		for _, modID := range coterie.Roles["moderators"] {
+			if modID == modIDStr {
+				isAuthorized = true
+				break
+			}
+		}
+	}
+
+	if !isAuthorized {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Unauthorized. Only owners, admins, or moderators can remove posts.",
+		})
+	}
+
+	// Remove the post from the posts collection
+	result, err := postCollection.DeleteOne(context.Background(), bson.M{"_id": postIDStr})
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error removing post: " + err.Error(),
+		})
+	}
+
+	if result.DeletedCount == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "Post not found or already removed",
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Post removed successfully",
+	})
 }
 
 // Rate limit configuration
@@ -1066,6 +1259,7 @@ func CoterieRoutes(app *fiber.App) {
 	app.Post("/coterie/set-warning-limit", limiter.New(rateLimitConfig), SetWarningLimit)
 	app.Get("/coterie/:name", GetCoterieByName)
 	app.Get("/user/:userParam/coteries", GetCoteriesByUserID)
+	app.Delete("/coterie/remove-post", limiter.New(rateLimitConfig), RemovePostFromCoterie)
 	app.Post("/coterie/update", limiter.New(rateLimitConfig), UpdateCoterie)
 	app.Post("/coterie/join", limiter.New(rateLimitConfig), JoinCoterie)
 	app.Post("/coterie/promote", limiter.New(rateLimitConfig), promoteMember)
