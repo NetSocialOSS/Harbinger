@@ -63,17 +63,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 		// Calculate number of comments
 		posts[i].CommentNumber = len(post.Comments)
 
-		// Update comments with author usernames
-		for j, comment := range posts[i].Comments {
-			var commenter types.Author
-			err := usersCollection.FindOne(ctx, bson.M{"_id": comment.Author}).Decode(&commenter)
-			if err != nil {
-				// Handle error (commenter not found)
-				posts[i].Comments[j].AuthorName = "" // or handle as needed
-				continue
-			}
-			posts[i].Comments[j].AuthorName = commenter.Username
-		}
+		// Remove comments from the post object
+		posts[i].Comments = nil
 
 		// Update hearts with author usernames
 		for j, heart := range post.Hearts {

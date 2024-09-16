@@ -466,5 +466,4 @@ func User(app *fiber.App) {
 	app.Post("/profile/settings", limiter.New(rateLimitConfig), UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", limiter.New(rateLimitConfig), FollowUser)
 	app.Post("/unfollow/:username/:followerID", limiter.New(rateLimitConfig), UnfollowUser)
-
 }

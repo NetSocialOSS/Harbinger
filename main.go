@@ -110,8 +110,7 @@ func main() {
 	// Post routes with rate limiting
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
-	app.Post("/post/like", limiter.New(rateLimitConfig), routes.LikePost)
-	app.Post("/post/unlike", limiter.New(rateLimitConfig), routes.UnlikePost)
+	app.Post("/post/heart", limiter.New(rateLimitConfig), routes.HeartPost)
 	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
 	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
@@ -121,6 +120,9 @@ func main() {
 
 	// Report
 	routes.Report(app)
+
+	// Admin
+	routes.Admin(app)
 
 	// Coterie
 	routes.CoterieRoutes(app)

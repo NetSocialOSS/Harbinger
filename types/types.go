@@ -60,6 +60,7 @@ type Comment struct {
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsPartner      bool               `json:"isPartner"`
 	AuthorName     string             `json:"authorName"`
+	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
 	IsOwner        bool               `json:"isOwner"`
 	IsDeveloper    bool               `json:"isDeveloper"`
 	Replies        []Comment          `bson:"replies" json:"replies"`
