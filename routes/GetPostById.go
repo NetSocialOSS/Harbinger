@@ -38,9 +38,7 @@ func GetPostById(c *fiber.Ctx) error {
 		"createdAt": 1,
 		"hearts":    1,
 		"image":     1, // Updated field to "image"
-		"comments": bson.M{
-			"$elemMatch": bson.M{}, // Only include the first matching comment
-		},
+		"comments":  1, // Fetch all comments
 	})
 
 	// Find the post by its ID
@@ -82,6 +80,7 @@ func GetPostById(c *fiber.Ctx) error {
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
 			IsPartner:      commentAuthor.IsPartner,
+			CreatedAt:      comment.CreatedAt,
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsDeveloper:    commentAuthor.IsDeveloper,

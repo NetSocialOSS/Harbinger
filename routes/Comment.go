@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"log"
+	"time"
 
 	"netsocial/types"
 
@@ -45,9 +46,10 @@ func AddComment(c *fiber.Ctx) error {
 
 	// Create a new comment
 	comment := types.Comment{
-		ID:      primitive.NewObjectID(),
-		Content: content,
-		Author:  authorObjectID,
+		ID:        primitive.NewObjectID(),
+		Content:   content,
+		Author:    authorObjectID,
+		CreatedAt: time.Now(),
 	}
 
 	// Define collections
