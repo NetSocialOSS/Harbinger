@@ -151,6 +151,27 @@ func GetUserByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding user data"})
 	}
 
+	// If the user is private, do not show their posts, followers, or following
+	if user.IsPrivate {
+		return c.JSON(fiber.Map{
+			"username":       user.Username,
+			"displayname":    user.DisplayName,
+			"isVerified":     user.IsVerified,
+			"isOrganisation": user.IsOrganisation,
+			"isPrivate":      user.IsPrivate,
+			"isDeveloper":    user.IsDeveloper,
+			"isOwner":        user.IsOwner,
+			"isBanned":       user.IsBanned,
+			"isPartner":      user.IsPartner,
+			"bio":            user.Bio,
+			"createdAt":      user.CreatedAt,
+			"followersCount": len(user.Followers),
+			"followingCount": len(user.Following),
+			"links":          user.Links,
+			"message":        "This account is private",
+		})
+	}
+
 	// Fetch posts made by the user without comments, sorted by createdAt in descending order
 	var posts []map[string]interface{}
 	postCollection := db.Database("SocialFlux").Collection("posts")
@@ -255,6 +276,7 @@ func GetUserByName(c *fiber.Ctx) error {
 		followingUsernames = append(followingUsernames, username)
 	}
 
+	// Return full user data if the account is not private
 	return c.JSON(fiber.Map{
 		"username":       user.Username,
 		"isVerified":     user.IsVerified,
@@ -460,10 +482,85 @@ func UnfollowUser(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Successfully unfollowed user"})
 }
 
+// TogglePrivacy allows a user to toggle the privacy of their profile (isPrivate field)
+func TogglePrivacy(c *fiber.Ctx) error {
+	// Get the MongoDB client from Fiber's context
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+
+	// Retrieve the userId from query parameters
+	userID := c.Query("userId")
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "userId query parameter is required",
+		})
+	}
+
+	// Convert the userID to a primitive.ObjectID
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid userID provided",
+		})
+	}
+
+	// Set up a context with a timeout to avoid long-running operations
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Get the users collection
+	usersCollection := db.Database("SocialFlux").Collection("users")
+
+	// Find the user by ID and retrieve the current value of isPrivate
+	var user bson.M
+	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "User not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to retrieve user details",
+		})
+	}
+
+	// Toggle the isPrivate field
+	isPrivate, ok := user["isPrivate"].(bool)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error retrieving the isPrivate field",
+		})
+	}
+	newPrivacyStatus := !isPrivate
+
+	// Update the user's isPrivate field
+	update := bson.M{
+		"$set": bson.M{"isPrivate": newPrivacyStatus},
+	}
+	_, err = usersCollection.UpdateOne(ctx, bson.M{"_id": objID}, update, options.Update().SetUpsert(false))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update privacy settings",
+		})
+	}
+
+	// Respond with the new privacy status
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message":      "Privacy setting updated successfully",
+		"isPrivateNow": newPrivacyStatus,
+	})
+}
+
 func User(app *fiber.App) {
 	app.Post("/user/account/delete", limiter.New(rateLimitConfig), deleteAccount)
 	app.Get("/user/:username", GetUserByName)
 	app.Post("/profile/settings", limiter.New(rateLimitConfig), UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", limiter.New(rateLimitConfig), FollowUser)
 	app.Post("/unfollow/:username/:followerID", limiter.New(rateLimitConfig), UnfollowUser)
+	app.Post("/user/settings/privacy", limiter.New(rateLimitConfig), TogglePrivacy)
 }

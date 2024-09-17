@@ -28,7 +28,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Sort by CreatedAt in descending order
+	// Sort posts by CreatedAt in descending order
 	findOptions := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
 	cursor, err := postsCollection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
@@ -43,9 +43,11 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 	// Create a map to store userID to username mappings
 	userCache := make(map[primitive.ObjectID]string)
+	var visiblePosts []types.Post // A slice to store posts that can be shown
 
 	for i, post := range posts {
 		var author types.Author
+		// Query the usersCollection to check if the author exists and whether they are private
 		err := usersCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
 			// Handle error (author not found)
@@ -53,6 +55,12 @@ func GetAllPosts(c *fiber.Ctx) error {
 			continue
 		}
 
+		// Check if the author's account is private
+		if author.IsPrivate {
+			continue // Skip this post if the author's account is private
+		}
+
+		// Update post author details if user is not private
 		posts[i].Author = post.Author
 		posts[i].AuthorName = author.Username
 		posts[i].AuthorDetails = author // Set the author details
@@ -90,9 +98,13 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 			posts[i].Hearts[j] = username
 		}
+
+		// Add post to the visible posts slice
+		visiblePosts = append(visiblePosts, posts[i])
 	}
 
-	return c.JSON(posts)
+	// Return only visible posts (posts from non-private accounts)
+	return c.JSON(visiblePosts)
 }
 
 func calculateTimeAgo(createdAt time.Time) string {

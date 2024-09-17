@@ -360,6 +360,7 @@ func CurrentUser(c *fiber.Ctx) error {
 		"_id":         user.ID,
 		"username":    user.Username,
 		"displayname": user.DisplayName,
+		"isPrivate": user.IsPrivate,
 	})
 }
 

@@ -45,6 +45,7 @@ type UserSettingsUpdate struct {
 type Author struct {
 	IsVerified     bool      `json:"isVerified"`
 	IsDeveloper    bool      `json:"isDeveloper"`
+	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
 	IsPartner      bool      `json:"isPartner"`
 	IsOwner        bool      `json:"isOwner"`
 	IsOrganisation bool      `json:"isOrganisation"`
@@ -81,6 +82,7 @@ type User struct {
 	IsDeveloper    bool               `json:"isDeveloper"`
 	IsPartner      bool               `json:"isPartner"`
 	IsOwner        bool               `json:"isOwner"`
+	IsPrivate      bool               `bson:"isPrivate" json:"isPrivate"`
 	IsBanned       bool               `json:"isBanned"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
