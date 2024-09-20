@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"netsocial/types"
@@ -80,14 +81,20 @@ func GetPostById(c *fiber.Ctx) error {
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
 			IsPartner:      commentAuthor.IsPartner,
-			CreatedAt:      comment.CreatedAt,
+			TimeAgo:        TimeAgo(comment.CreatedAt),
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsDeveloper:    commentAuthor.IsDeveloper,
 			Replies:        comment.Replies,
+			CreatedAt:      comment.CreatedAt,
 		}
 		comments = append(comments, commentData)
 	}
+
+	// Sort comments by CreatedAt in descending order (most recent first)
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.After(comments[j].CreatedAt)
+	})
 
 	// Update hearts with author usernames
 	var hearts []string

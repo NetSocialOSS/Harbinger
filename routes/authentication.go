@@ -357,10 +357,11 @@ func CurrentUser(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"_id":         user.ID,
-		"username":    user.Username,
-		"displayname": user.DisplayName,
-		"isPrivate": user.IsPrivate,
+		"_id":            user.ID,
+		"username":       user.Username,
+		"displayname":    user.DisplayName,
+		"isPrivate":      user.IsPrivate,
+		"isOrganisation": user.IsOrganisation,
 	})
 }
 

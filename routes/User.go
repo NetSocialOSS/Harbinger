@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"netsocial/types"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -349,6 +350,15 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 		updateParams.Links = strings.Split(decodedLinks, ",")
 	}
 
+	// Parsing IsOrganisation from query parameters
+	isOrgQueryParam := c.Query("isOrganisation")
+	if isOrgQueryParam != "" {
+		isOrg, err := strconv.ParseBool(isOrgQueryParam)
+		if err == nil {
+			updateParams.IsOrganisation = &isOrg // Assign a pointer to bool
+		}
+	}
+
 	// Parsing request body parameters (if any)
 	if err := c.BodyParser(&updateParams); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -372,6 +382,11 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	}
 	if len(updateParams.Links) > 0 {
 		updateFields["links"] = updateParams.Links
+	}
+
+	// Handle the IsOrganisation field
+	if updateParams.IsOrganisation != nil {
+		updateFields["isOrganisation"] = *updateParams.IsOrganisation // Dereference the pointer
 	}
 
 	// Perform update operation

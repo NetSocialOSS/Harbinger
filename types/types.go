@@ -38,6 +38,7 @@ type UserSettingsUpdate struct {
 	DisplayName    string   `json:"displayName,omitempty"`
 	Bio            string   `json:"bio,omitempty"`
 	ProfilePicture string   `json:"profilePicture,omitempty"`
+	IsOrganisation *bool    `json:"isOrganisation"`
 	ProfileBanner  string   `json:"profileBanner,omitempty"`
 	Links          []string `json:"links,omitempty"`
 }
@@ -61,7 +62,8 @@ type Comment struct {
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsPartner      bool               `json:"isPartner"`
 	AuthorName     string             `json:"authorName"`
-	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	TimeAgo        string             `json:"timeAgo"`
 	IsOwner        bool               `json:"isOwner"`
 	IsDeveloper    bool               `json:"isDeveloper"`
 	Replies        []Comment          `bson:"replies" json:"replies"`
