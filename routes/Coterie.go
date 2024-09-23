@@ -605,6 +605,8 @@ func UpdateCoterie(c *fiber.Ctx) error {
 	newName := c.Query("newName")
 	newDescription := c.Query("newDescription")
 	ownerID := c.Query("ownerID")
+	newBanner := c.Query("newBanner")
+	newAvatar := c.Query("newAvatar")
 
 	// Validate owner ID
 	ownerObjectID, err := primitive.ObjectIDFromHex(ownerID)
@@ -624,6 +626,12 @@ func UpdateCoterie(c *fiber.Ctx) error {
 	}
 	if newDescription != "" {
 		updateFields["description"] = newDescription
+	}
+	if newBanner != "" {
+		updateFields["banner"] = newBanner
+	}
+	if newAvatar != "" {
+		updateFields["avatar"] = newAvatar
 	}
 
 	update := bson.M{"$set": updateFields}
