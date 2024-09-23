@@ -13,7 +13,7 @@ type Post struct {
 	Author        primitive.ObjectID `bson:"author" json:"-"`
 	AuthorName    string             `json:"authorName,omitempty"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string             `json:"timeAgo" json:"timeAgo"`
+	TimeAgo       string             `json:"timeAgo" bson:"timeAgo"`
 	Image         []string           `bson:"image" json:"image"`
 	Hearts        []string           `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
@@ -38,6 +38,7 @@ type UserSettingsUpdate struct {
 	DisplayName    string   `json:"displayName,omitempty"`
 	Bio            string   `json:"bio,omitempty"`
 	ProfilePicture string   `json:"profilePicture,omitempty"`
+	IsOrganisation *bool    `json:"isOrganisation"`
 	ProfileBanner  string   `json:"profileBanner,omitempty"`
 	Links          []string `json:"links,omitempty"`
 }
@@ -45,7 +46,10 @@ type UserSettingsUpdate struct {
 type Author struct {
 	IsVerified     bool      `json:"isVerified"`
 	IsDeveloper    bool      `json:"isDeveloper"`
+	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
 	IsPartner      bool      `json:"isPartner"`
+	ProfilePicture string    `json:"profilePicture,omitempty"`
+	ProfileBanner  string    `json:"profileBanner,omitempty"`
 	IsOwner        bool      `json:"isOwner"`
 	IsOrganisation bool      `json:"isOrganisation"`
 	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
@@ -60,7 +64,8 @@ type Comment struct {
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsPartner      bool               `json:"isPartner"`
 	AuthorName     string             `json:"authorName"`
-	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
+	CreatedAt      time.Time          `json:"createdAt"`
+	TimeAgo        string             `json:"timeAgo"`
 	IsOwner        bool               `json:"isOwner"`
 	IsDeveloper    bool               `json:"isDeveloper"`
 	Replies        []Comment          `bson:"replies" json:"replies"`
@@ -81,6 +86,7 @@ type User struct {
 	IsDeveloper    bool               `json:"isDeveloper"`
 	IsPartner      bool               `json:"isPartner"`
 	IsOwner        bool               `json:"isOwner"`
+	IsPrivate      bool               `bson:"isPrivate" json:"isPrivate"`
 	IsBanned       bool               `json:"isBanned"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`

@@ -3,6 +3,7 @@ package routes
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"netsocial/types"
@@ -80,14 +81,20 @@ func GetPostById(c *fiber.Ctx) error {
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
 			IsPartner:      commentAuthor.IsPartner,
-			CreatedAt:      comment.CreatedAt,
+			TimeAgo:        TimeAgo(comment.CreatedAt),
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsDeveloper:    commentAuthor.IsDeveloper,
 			Replies:        comment.Replies,
+			CreatedAt:      comment.CreatedAt,
 		}
 		comments = append(comments, commentData)
 	}
+
+	// Sort comments by CreatedAt in descending order (most recent first)
+	sort.Slice(comments, func(i, j int) bool {
+		return comments[i].CreatedAt.After(comments[j].CreatedAt)
+	})
 
 	// Update hearts with author usernames
 	var hearts []string
@@ -109,14 +116,15 @@ func GetPostById(c *fiber.Ctx) error {
 
 	// Construct the response data
 	responseData := map[string]interface{}{
-		"_id":        post.ID,
-		"title":      post.Title,
-		"content":    post.Content,
-		"authorName": author.Username,
+		"_id":     post.ID,
+		"title":   post.Title,
+		"content": post.Content,
 		"author": map[string]interface{}{
 			"username":       author.Username,
 			"isVerified":     author.IsVerified,
 			"isOrganisation": author.IsOrganisation,
+			"profileBanner":  author.ProfileBanner,
+			"profilePicture": author.ProfilePicture,
 			"isDeveloper":    author.IsDeveloper,
 			"isPartner":      author.IsPartner,
 			"isOwner":        author.IsOwner,

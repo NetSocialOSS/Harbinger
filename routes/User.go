@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"netsocial/types"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -151,6 +152,27 @@ func GetUserByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding user data"})
 	}
 
+	// If the user is private, do not show their posts, followers, or following
+	if user.IsPrivate {
+		return c.JSON(fiber.Map{
+			"username":       user.Username,
+			"displayname":    user.DisplayName,
+			"isVerified":     user.IsVerified,
+			"isOrganisation": user.IsOrganisation,
+			"isPrivate":      user.IsPrivate,
+			"isDeveloper":    user.IsDeveloper,
+			"isOwner":        user.IsOwner,
+			"isBanned":       user.IsBanned,
+			"isPartner":      user.IsPartner,
+			"bio":            user.Bio,
+			"createdAt":      user.CreatedAt,
+			"followersCount": len(user.Followers),
+			"followingCount": len(user.Following),
+			"links":          user.Links,
+			"message":        "This account is private",
+		})
+	}
+
 	// Fetch posts made by the user without comments, sorted by createdAt in descending order
 	var posts []map[string]interface{}
 	postCollection := db.Database("SocialFlux").Collection("posts")
@@ -216,6 +238,8 @@ func GetUserByName(c *fiber.Ctx) error {
 				"username":       author.Username,
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
+				"profileBanner":  author.ProfileBanner,
+				"profilePicture": author.ProfilePicture,
 				"isDeveloper":    author.IsDeveloper,
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
@@ -255,6 +279,7 @@ func GetUserByName(c *fiber.Ctx) error {
 		followingUsernames = append(followingUsernames, username)
 	}
 
+	// Return full user data if the account is not private
 	return c.JSON(fiber.Map{
 		"username":       user.Username,
 		"isVerified":     user.IsVerified,
@@ -264,6 +289,8 @@ func GetUserByName(c *fiber.Ctx) error {
 		"isBanned":       user.IsBanned,
 		"isPartner":      user.IsPartner,
 		"displayname":    user.DisplayName,
+		"profilePicture": user.ProfilePicture,
+		"profileBanner":  user.ProfileBanner,
 		"bio":            user.Bio,
 		"createdAt":      user.CreatedAt,
 		"followersCount": len(user.Followers),
@@ -297,78 +324,60 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 		})
 	}
 
-	// Retrieve update parameters from both query and request body
-	var updateParams types.UserSettingsUpdate
-
-	// Helper function to decode URL-encoded values
-	decodeIfNotEmpty := func(value string) string {
-		decoded, err := url.QueryUnescape(value)
-		if err != nil {
-			return value // Return original value if decoding fails
-		}
-		return decoded
-	}
-
-	// Parsing and decoding query parameters
-	if displayName := c.Query("displayName"); displayName != "" {
-		updateParams.DisplayName = decodeIfNotEmpty(displayName)
-	}
-	if bio := c.Query("bio"); bio != "" {
-		updateParams.Bio = decodeIfNotEmpty(bio)
-	}
-	if profilePicture := c.Query("profilePicture"); profilePicture != "" {
-		updateParams.ProfilePicture = decodeIfNotEmpty(profilePicture)
-	}
-	if profileBanner := c.Query("profileBanner"); profileBanner != "" {
-		updateParams.ProfileBanner = decodeIfNotEmpty(profileBanner)
-	}
-	if links := c.Query("links"); links != "" {
-		decodedLinks := decodeIfNotEmpty(links)
-		updateParams.Links = strings.Split(decodedLinks, ",")
-	}
-
-	// Parsing request body parameters (if any)
-	if err := c.BodyParser(&updateParams); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Error parsing request body",
-		})
-	}
-
-	// Prepare update filter and update fields
+	// Retrieve update parameters
 	updateFields := bson.M{}
-	if updateParams.DisplayName != "" {
-		updateFields["displayName"] = updateParams.DisplayName
+
+	// Helper function to decode and add fields to updateFields
+	decodeAndAddField := func(param string, field string) {
+		if value := c.Query(param); value != "" {
+			decoded, err := url.QueryUnescape(value)
+			if err == nil {
+				updateFields[field] = decoded
+			}
+		}
 	}
-	if updateParams.Bio != "" {
-		updateFields["bio"] = updateParams.Bio
+
+	decodeAndAddField("displayName", "displayName")
+	decodeAndAddField("bio", "bio")
+	decodeAndAddField("profilePicture", "profilePicture")
+	decodeAndAddField("profileBanner", "profileBanner")
+
+	// Handle links
+	if links := c.Query("links"); links != "" {
+		decodedLinks, err := url.QueryUnescape(links)
+		if err == nil {
+			updateFields["links"] = strings.Split(decodedLinks, ",")
+		}
 	}
-	if updateParams.ProfilePicture != "" {
-		updateFields["profilePicture"] = updateParams.ProfilePicture
-	}
-	if updateParams.ProfileBanner != "" {
-		updateFields["profileBanner"] = updateParams.ProfileBanner
-	}
-	if len(updateParams.Links) > 0 {
-		updateFields["links"] = updateParams.Links
+
+	// Handle IsOrganisation
+	if isOrgQueryParam := c.Query("isOrganisation"); isOrgQueryParam != "" {
+		if isOrg, err := strconv.ParseBool(isOrgQueryParam); err == nil {
+			updateFields["isOrganisation"] = isOrg
+		}
 	}
 
 	// Perform update operation
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	filter := bson.M{"_id": objID}
-
 	update := bson.M{"$set": updateFields}
 
-	// Use UpdateOne with Upsert option to prevent overriding existing fields with empty strings
-	opts := options.Update().SetUpsert(true)
-	_, err = usersCollection.UpdateOne(context.Background(), filter, update, opts)
+	result, err := usersCollection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to update user profile",
 		})
 	}
 
+	if result.ModifiedCount == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "User not found or no changes made",
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"message": "Profile settings updated successfully!",
+		"updates": updateFields,
 	})
 }
 
@@ -460,10 +469,85 @@ func UnfollowUser(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Successfully unfollowed user"})
 }
 
+// TogglePrivacy allows a user to toggle the privacy of their profile (isPrivate field)
+func TogglePrivacy(c *fiber.Ctx) error {
+	// Get the MongoDB client from Fiber's context
+	db, ok := c.Locals("db").(*mongo.Client)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database connection not available",
+		})
+	}
+
+	// Retrieve the userId from query parameters
+	userID := c.Query("userId")
+	if userID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "userId query parameter is required",
+		})
+	}
+
+	// Convert the userID to a primitive.ObjectID
+	objID, err := primitive.ObjectIDFromHex(userID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid userID provided",
+		})
+	}
+
+	// Set up a context with a timeout to avoid long-running operations
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Get the users collection
+	usersCollection := db.Database("SocialFlux").Collection("users")
+
+	// Find the user by ID and retrieve the current value of isPrivate
+	var user bson.M
+	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "User not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to retrieve user details",
+		})
+	}
+
+	// Toggle the isPrivate field
+	isPrivate, ok := user["isPrivate"].(bool)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Error retrieving the isPrivate field",
+		})
+	}
+	newPrivacyStatus := !isPrivate
+
+	// Update the user's isPrivate field
+	update := bson.M{
+		"$set": bson.M{"isPrivate": newPrivacyStatus},
+	}
+	_, err = usersCollection.UpdateOne(ctx, bson.M{"_id": objID}, update, options.Update().SetUpsert(false))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Failed to update privacy settings",
+		})
+	}
+
+	// Respond with the new privacy status
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message":      "Privacy setting updated successfully",
+		"isPrivateNow": newPrivacyStatus,
+	})
+}
+
 func User(app *fiber.App) {
 	app.Post("/user/account/delete", limiter.New(rateLimitConfig), deleteAccount)
 	app.Get("/user/:username", GetUserByName)
 	app.Post("/profile/settings", limiter.New(rateLimitConfig), UpdateProfileSettings)
 	app.Post("/follow/:username/:followerID", limiter.New(rateLimitConfig), FollowUser)
 	app.Post("/unfollow/:username/:followerID", limiter.New(rateLimitConfig), UnfollowUser)
+	app.Post("/user/settings/privacy", limiter.New(rateLimitConfig), TogglePrivacy)
 }

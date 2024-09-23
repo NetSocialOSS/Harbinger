@@ -39,7 +39,7 @@ func main() {
 		Prefork:        true,
 		CaseSensitive:  true,
 		StrictRouting:  true,
-		ReadBufferSize: 100000000,
+		ReadBufferSize: 1000000,
 		ServerHeader:   "Net Social",
 		AppName:        "Connect, Share, Grow.",
 		ErrorHandler: func(c *fiber.Ctx, err error) error {
@@ -114,9 +114,6 @@ func main() {
 	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
 	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
-
-	// Image
-	routes.Image(app)
 
 	// Report
 	routes.Report(app)
