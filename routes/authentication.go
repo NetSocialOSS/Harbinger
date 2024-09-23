@@ -361,6 +361,7 @@ func CurrentUser(c *fiber.Ctx) error {
 		"username":       user.Username,
 		"displayname":    user.DisplayName,
 		"isPrivate":      user.IsPrivate,
+		"profilePicture": user.ProfilePicture,
 		"isOrganisation": user.IsOrganisation,
 	})
 }

@@ -208,6 +208,8 @@ func GetCoterieByName(c *fiber.Ctx) error {
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
 				"isDeveloper":    author.IsDeveloper,
+				"profileBanner":  author.ProfileBanner,
+				"profilePicture": author.ProfilePicture,
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
 				"username":       author.Username,

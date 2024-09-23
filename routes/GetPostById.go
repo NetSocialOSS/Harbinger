@@ -116,14 +116,15 @@ func GetPostById(c *fiber.Ctx) error {
 
 	// Construct the response data
 	responseData := map[string]interface{}{
-		"_id":        post.ID,
-		"title":      post.Title,
-		"content":    post.Content,
-		"authorName": author.Username,
+		"_id":     post.ID,
+		"title":   post.Title,
+		"content": post.Content,
 		"author": map[string]interface{}{
 			"username":       author.Username,
 			"isVerified":     author.IsVerified,
 			"isOrganisation": author.IsOrganisation,
+			"profileBanner":  author.ProfileBanner,
+			"profilePicture": author.ProfilePicture,
 			"isDeveloper":    author.IsDeveloper,
 			"isPartner":      author.IsPartner,
 			"isOwner":        author.IsOwner,

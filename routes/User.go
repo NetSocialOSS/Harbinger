@@ -238,6 +238,8 @@ func GetUserByName(c *fiber.Ctx) error {
 				"username":       author.Username,
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
+				"profileBanner":  author.ProfileBanner,
+				"profilePicture": author.ProfilePicture,
 				"isDeveloper":    author.IsDeveloper,
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
@@ -287,6 +289,8 @@ func GetUserByName(c *fiber.Ctx) error {
 		"isBanned":       user.IsBanned,
 		"isPartner":      user.IsPartner,
 		"displayname":    user.DisplayName,
+		"profilePicture": user.ProfilePicture,
+		"profileBanner":  user.ProfileBanner,
 		"bio":            user.Bio,
 		"createdAt":      user.CreatedAt,
 		"followersCount": len(user.Followers),
@@ -320,92 +324,60 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 		})
 	}
 
-	// Retrieve update parameters from both query and request body
-	var updateParams types.UserSettingsUpdate
-
-	// Helper function to decode URL-encoded values
-	decodeIfNotEmpty := func(value string) string {
-		decoded, err := url.QueryUnescape(value)
-		if err != nil {
-			return value // Return original value if decoding fails
-		}
-		return decoded
-	}
-
-	// Parsing and decoding query parameters
-	if displayName := c.Query("displayName"); displayName != "" {
-		updateParams.DisplayName = decodeIfNotEmpty(displayName)
-	}
-	if bio := c.Query("bio"); bio != "" {
-		updateParams.Bio = decodeIfNotEmpty(bio)
-	}
-	if profilePicture := c.Query("profilePicture"); profilePicture != "" {
-		updateParams.ProfilePicture = decodeIfNotEmpty(profilePicture)
-	}
-	if profileBanner := c.Query("profileBanner"); profileBanner != "" {
-		updateParams.ProfileBanner = decodeIfNotEmpty(profileBanner)
-	}
-	if links := c.Query("links"); links != "" {
-		decodedLinks := decodeIfNotEmpty(links)
-		updateParams.Links = strings.Split(decodedLinks, ",")
-	}
-
-	// Parsing IsOrganisation from query parameters
-	isOrgQueryParam := c.Query("isOrganisation")
-	if isOrgQueryParam != "" {
-		isOrg, err := strconv.ParseBool(isOrgQueryParam)
-		if err == nil {
-			updateParams.IsOrganisation = &isOrg // Assign a pointer to bool
-		}
-	}
-
-	// Parsing request body parameters (if any)
-	if err := c.BodyParser(&updateParams); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Error parsing request body",
-		})
-	}
-
-	// Prepare update filter and update fields
+	// Retrieve update parameters
 	updateFields := bson.M{}
-	if updateParams.DisplayName != "" {
-		updateFields["displayName"] = updateParams.DisplayName
-	}
-	if updateParams.Bio != "" {
-		updateFields["bio"] = updateParams.Bio
-	}
-	if updateParams.ProfilePicture != "" {
-		updateFields["profilePicture"] = updateParams.ProfilePicture
-	}
-	if updateParams.ProfileBanner != "" {
-		updateFields["profileBanner"] = updateParams.ProfileBanner
-	}
-	if len(updateParams.Links) > 0 {
-		updateFields["links"] = updateParams.Links
+
+	// Helper function to decode and add fields to updateFields
+	decodeAndAddField := func(param string, field string) {
+		if value := c.Query(param); value != "" {
+			decoded, err := url.QueryUnescape(value)
+			if err == nil {
+				updateFields[field] = decoded
+			}
+		}
 	}
 
-	// Handle the IsOrganisation field
-	if updateParams.IsOrganisation != nil {
-		updateFields["isOrganisation"] = *updateParams.IsOrganisation // Dereference the pointer
+	decodeAndAddField("displayName", "displayName")
+	decodeAndAddField("bio", "bio")
+	decodeAndAddField("profilePicture", "profilePicture")
+	decodeAndAddField("profileBanner", "profileBanner")
+
+	// Handle links
+	if links := c.Query("links"); links != "" {
+		decodedLinks, err := url.QueryUnescape(links)
+		if err == nil {
+			updateFields["links"] = strings.Split(decodedLinks, ",")
+		}
+	}
+
+	// Handle IsOrganisation
+	if isOrgQueryParam := c.Query("isOrganisation"); isOrgQueryParam != "" {
+		if isOrg, err := strconv.ParseBool(isOrgQueryParam); err == nil {
+			updateFields["isOrganisation"] = isOrg
+		}
 	}
 
 	// Perform update operation
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	filter := bson.M{"_id": objID}
-
 	update := bson.M{"$set": updateFields}
 
-	// Use UpdateOne with Upsert option to prevent overriding existing fields with empty strings
-	opts := options.Update().SetUpsert(true)
-	_, err = usersCollection.UpdateOne(context.Background(), filter, update, opts)
+	result, err := usersCollection.UpdateOne(context.Background(), filter, update)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to update user profile",
 		})
 	}
 
+	if result.ModifiedCount == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "User not found or no changes made",
+		})
+	}
+
 	return c.JSON(fiber.Map{
 		"message": "Profile settings updated successfully!",
+		"updates": updateFields,
 	})
 }
 

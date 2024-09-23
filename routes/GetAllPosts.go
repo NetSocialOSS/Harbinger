@@ -62,7 +62,6 @@ func GetAllPosts(c *fiber.Ctx) error {
 
 		// Update post author details if user is not private
 		posts[i].Author = post.Author
-		posts[i].AuthorName = author.Username
 		posts[i].AuthorDetails = author // Set the author details
 
 		// Calculate time ago

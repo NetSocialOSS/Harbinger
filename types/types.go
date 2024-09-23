@@ -13,7 +13,7 @@ type Post struct {
 	Author        primitive.ObjectID `bson:"author" json:"-"`
 	AuthorName    string             `json:"authorName,omitempty"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string             `json:"timeAgo" json:"timeAgo"`
+	TimeAgo       string             `json:"timeAgo" bson:"timeAgo"`
 	Image         []string           `bson:"image" json:"image"`
 	Hearts        []string           `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
@@ -48,6 +48,8 @@ type Author struct {
 	IsDeveloper    bool      `json:"isDeveloper"`
 	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
 	IsPartner      bool      `json:"isPartner"`
+	ProfilePicture string    `json:"profilePicture,omitempty"`
+	ProfileBanner  string    `json:"profileBanner,omitempty"`
 	IsOwner        bool      `json:"isOwner"`
 	IsOrganisation bool      `json:"isOrganisation"`
 	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
