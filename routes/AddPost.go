@@ -147,5 +147,6 @@ func AddPost(c *fiber.Ctx) error {
 
 	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"message": "Post successfully created!",
+		"postId":  postID,
 	})
 }
