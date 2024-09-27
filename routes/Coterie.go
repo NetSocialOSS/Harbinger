@@ -166,7 +166,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 	}
 
 	// Fetch posts, sorted by creation date in descending order
-	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{"createdAt", -1}}))
+	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

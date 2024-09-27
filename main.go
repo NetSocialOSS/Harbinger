@@ -36,7 +36,7 @@ func main() {
 
 	// Create Fiber app instance
 	app := fiber.New(fiber.Config{
-		Prefork:        true,
+		Prefork:        false,
 		CaseSensitive:  true,
 		StrictRouting:  true,
 		ReadBufferSize: 1000000,
@@ -85,7 +85,7 @@ func main() {
 			"author":  "Ranveer Soni",
 			"links": fiber.Map{
 				"status": "https://status.netsocial.app",
-				"docs":   "https://docs.netsocial.app/",
+				"docs":   "https://docs.netsocial.app",
 			},
 		})
 	})
