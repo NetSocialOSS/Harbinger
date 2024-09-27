@@ -95,22 +95,22 @@ type User struct {
 }
 
 type Coterie struct {
-	ID              primitive.ObjectID         `bson:"_id" json:"_id"`
-	Name            string                     `bson:"name" json:"name"`
-	Description     string                     `bson:"description" json:"description"`
-	Members         []string                   `bson:"members" json:"members"`
-	Owner           primitive.ObjectID         `bson:"owner" json:"owner"`
-	OwnerUsername   string                     `json:"ownerUsername,omitempty"`
-	CreatedAt       time.Time                  `bson:"createdAt" json:"createdAt"`
-	Banner          string                     `bson:"banner" json:"banner,omitempty"`
-	Avatar          string                     `bson:"avatar" json:"avatar,omitempty"`
-	IsVerified      bool                       `json:"isVerified"`
-	TotalPosts      int                        `json:"totalPosts,omitempty"`
-	Roles           map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`
-	BannedMembers   []string                   `bson:"bannedMembers,omitempty" json:"bannedMembers,omitempty"`
-	MemberUsernames []string                   `json:"memberUsernames,omitempty"`
-	WarningDetails  map[string][]WarningDetail `bson:"warningDetails,omitempty" json:"warningDetails,omitempty"`
-	WarningLimit    int                        `bson:"warningLimit" json:"warningLimit"`
+	ID             primitive.ObjectID         `bson:"_id" json:"_id"`
+	Name           string                     `bson:"name" json:"name"`
+	Description    string                     `bson:"description" json:"description"`
+	Members        []string                   `bson:"members" json:"members"`
+	Owner          primitive.ObjectID         `bson:"owner" json:"owner"`
+	OwnerUsername  string                     `json:"ownerUsername,omitempty"`
+	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
+	Banner         string                     `bson:"banner" json:"banner,omitempty"`
+	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
+	IsVerified     bool                       `json:"isVerified"`
+	TotalPosts     int                        `json:"totalPosts,omitempty"`
+	Roles          map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`
+	BannedMembers  []string                   `bson:"bannedMembers,omitempty" json:"bannedMembers,omitempty"`
+	MemberDetails  []map[string]interface{}   `json:"memberDetails"`
+	WarningDetails map[string][]WarningDetail `bson:"warningDetails,omitempty" json:"warningDetails,omitempty"`
+	WarningLimit   int                        `bson:"warningLimit" json:"warningLimit"`
 }
 
 type Roles struct {

@@ -131,26 +131,32 @@ func GetCoterieByName(c *fiber.Ctx) error {
 
 	userIDToUsername := make(map[primitive.ObjectID]string)
 
-	// Fetch owner username
-	ownerUsername, err := getUsername(userCollection, coterie.Owner, userIDToUsername)
+	// Fetch owner username and profile picture
+	ownerDetails, err := getUserDetails(userCollection, coterie.Owner, userIDToUsername)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	// Fetch member usernames
-	var memberUsernames []string
+	// Fetch member usernames and profile pictures
+	var memberDetails []map[string]interface{}
 	for _, memberID := range coterie.Members {
 		memberObjectID, err := primitive.ObjectIDFromHex(memberID)
 		if err != nil {
-			memberUsernames = append(memberUsernames, "Invalid ID")
+			memberDetails = append(memberDetails, map[string]interface{}{
+				"username":       "Invalid ID",
+				"profilePicture": "",
+			})
 			continue
 		}
-		memberUsername, err := getUsername(userCollection, memberObjectID, userIDToUsername)
+		details, err := getUserDetails(userCollection, memberObjectID, userIDToUsername)
 		if err != nil {
-			memberUsernames = append(memberUsernames, "Unknown User")
+			memberDetails = append(memberDetails, map[string]interface{}{
+				"username":       "Unknown User",
+				"profilePicture": "",
+			})
 			continue
 		}
-		memberUsernames = append(memberUsernames, memberUsername)
+		memberDetails = append(memberDetails, details)
 	}
 
 	// Fetch total post count
@@ -173,27 +179,33 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Replace author ID with username
+		// Replace author ID with username and profile picture
 		var author types.User
 		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 		}
 
-		// Replace hearts IDs with usernames
-		var heartsUsernames []string
+		// Replace hearts IDs with usernames and profile pictures
+		var heartsDetails []map[string]interface{}
 		for _, heartID := range post.Hearts {
 			heartObjectID, err := primitive.ObjectIDFromHex(heartID)
 			if err != nil {
-				heartsUsernames = append(heartsUsernames, "Invalid ID")
+				heartsDetails = append(heartsDetails, map[string]interface{}{
+					"username":       "Invalid ID",
+					"profilePicture": "",
+				})
 				continue
 			}
-			heartUsername, err := getUsername(userCollection, heartObjectID, userIDToUsername)
+			details, err := getUserDetails(userCollection, heartObjectID, userIDToUsername)
 			if err != nil {
-				heartsUsernames = append(heartsUsernames, "Unknown User")
+				heartsDetails = append(heartsDetails, map[string]interface{}{
+					"username":       "Unknown User",
+					"profilePicture": "",
+				})
 				continue
 			}
-			heartsUsernames = append(heartsUsernames, heartUsername)
+			heartsDetails = append(heartsDetails, details)
 		}
 
 		postMap := map[string]interface{}{
@@ -201,7 +213,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			"title":         post.Title,
 			"content":       post.Content,
 			"image":         post.Image,
-			"hearts":        heartsUsernames,
+			"hearts":        heartsDetails,
 			"timeAgo":       calculateTimeAgo(post.CreatedAt),
 			"commentNumber": len(post.Comments),
 			"authorDetails": map[string]interface{}{
@@ -219,20 +231,20 @@ func GetCoterieByName(c *fiber.Ctx) error {
 	}
 
 	// Populate coterie object with fetched data
-	coterie.OwnerUsername = ownerUsername
-	coterie.MemberUsernames = memberUsernames
+	coterie.OwnerUsername = ownerDetails["username"].(string)
+	coterie.MemberDetails = memberDetails
 	coterie.TotalPosts = int(postCount)
 
 	// Prepare final result
 	result := map[string]interface{}{
 		"name":         coterie.Name,
 		"description":  coterie.Description,
-		"members":      memberUsernames,
-		"owner":        ownerUsername,
+		"members":      memberDetails,
+		"owner":        ownerDetails,
 		"isVerified":   coterie.IsVerified,
 		"TotalPosts":   len(posts),
 		"createdAt":    coterie.CreatedAt,
-		"TotalMembers": len(memberUsernames),
+		"TotalMembers": len(memberDetails),
 		"Post":         posts,
 	}
 
@@ -246,6 +258,28 @@ func GetCoterieByName(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(result)
+}
+
+// Helper function to fetch username and profile picture
+func getUserDetails(userCollection *mongo.Collection, userID primitive.ObjectID, cache map[primitive.ObjectID]string) (map[string]interface{}, error) {
+	if username, ok := cache[userID]; ok {
+		return map[string]interface{}{
+			"username":       username,
+			"profilePicture": "", // Adjust if the cache also stores profile pictures
+		}, nil
+	}
+
+	var user types.User
+	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		return nil, err
+	}
+
+	cache[userID] = user.Username
+	return map[string]interface{}{
+		"username":       user.Username,
+		"profilePicture": user.ProfilePicture,
+	}, nil
 }
 
 // AddNewCoterie handles the creation of a new coterie.
