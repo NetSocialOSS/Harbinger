@@ -278,6 +278,7 @@ func UserLogin(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
 	}
 
+	// Set the JWT token in a secure cookie
 	c.Cookie(&fiber.Cookie{
 		Name:     "token",
 		Value:    token,
@@ -286,7 +287,12 @@ func UserLogin(c *fiber.Ctx) error {
 		SameSite: "None",
 	})
 
-	err = sendDiscordWebhookLogin(user.Username)
+	// Extract host and IP address information
+	host := c.Hostname() // Gets the hostname
+	ip := c.IP()         // Gets the client's IP address
+
+	// Send login info to Discord webhook with host information
+	err = sendDiscordWebhookLogin(user.Username, host, ip)
 	if err != nil {
 		log.Printf("Error sending Discord webhook: %v", err)
 	}
@@ -294,17 +300,20 @@ func UserLogin(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"message": "Logged in successfully", "user_id": user.ID.Hex()})
 }
 
-func sendDiscordWebhookLogin(username string) error {
+func sendDiscordWebhookLogin(username, host, ip string) error {
 	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
 	if webhookURL == "" {
 		return errors.New("Discord webhook URL not set in environment variables")
 	}
 
-	content := "User logged in: " + username
+	// Construct the message content with username, host, and IP address
+	content := fmt.Sprintf("User logged in: %s\nHost: %s\nIP Address: %s", username, host, ip)
+
 	message := discordwebhook.Message{
 		Content: &content,
 	}
 
+	// Send the message to the Discord webhook
 	err := discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
 		return err
