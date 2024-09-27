@@ -8,7 +8,7 @@ import (
 
 func getConfig() types.Config {
 	return types.Config{
-		ApiVersion: "2.5.0",
+		ApiVersion: "2.8.0",
 		Database: types.Database{
 			Url: os.Getenv("DATABASE_URL"),
 		},

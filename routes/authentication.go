@@ -3,8 +3,6 @@ package routes
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log"
@@ -26,16 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = generateRandomString(286)
-
-func generateRandomString(length int) string {
-	bytes := make([]byte, length)
-	_, err := rand.Read(bytes)
-	if err != nil {
-		panic(err)
-	}
-	return base64.URLEncoding.EncodeToString(bytes)[:length]
-}
+var jwtSecret = os.Getenv("jwtSecret")
 
 func generateJWT(userID primitive.ObjectID) (string, error) {
 	claims := jwt.MapClaims{
@@ -165,7 +154,7 @@ func UserSignup(c *fiber.Ctx) error {
 	}
 
 	var lastUser types.User
-	err = userCollection.FindOne(context.TODO(), bson.M{}, options.FindOne().SetSort(bson.D{{"userid", -1}})).Decode(&lastUser)
+	err = userCollection.FindOne(context.TODO(), bson.M{}, options.FindOne().SetSort(bson.D{{Key: "userid", Value: -1}})).Decode(&lastUser)
 	if err != nil && err != mongo.ErrNoDocuments {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve last user"})
 	}
@@ -360,6 +349,8 @@ func CurrentUser(c *fiber.Ctx) error {
 		"_id":            user.ID,
 		"username":       user.Username,
 		"displayname":    user.DisplayName,
+		"bio":            user.Bio,
+		"links":          user.Links,
 		"isPrivate":      user.IsPrivate,
 		"profilePicture": user.ProfilePicture,
 		"isOrganisation": user.IsOrganisation,
