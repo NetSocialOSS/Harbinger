@@ -88,10 +88,19 @@ type User struct {
 	IsOwner        bool               `json:"isOwner"`
 	IsPrivate      bool               `bson:"isPrivate" json:"isPrivate"`
 	IsBanned       bool               `json:"isBanned"`
+	Session        []Session          `bson:"session" json:"session"`
 	Password       string             `bson:"password,omitempty" json:"-"`
 	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
 	Followers      []string           `bson:"followers" json:"followers"`
 	Following      []string           `bson:"following" json:"following"`
+}
+
+type Session struct {
+	UserID    primitive.ObjectID `bson:"user_id"`
+	SessionID string             `bson:"session_id"`
+	Device    string             `bson:"device"`
+	StartedAt time.Time          `bson:"started_at"`
+	ExpiresAt time.Time          `bson:"expires_at"`
 }
 
 type Coterie struct {
