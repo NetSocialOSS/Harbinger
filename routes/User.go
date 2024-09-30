@@ -418,6 +418,13 @@ func FollowUser(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error finding follower"})
 	}
 
+	// Check if the follower user is banned
+	if isBanned, ok := followerUser["IsBanned"].(bool); ok && isBanned {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
+			"error": "Hey there, you are banned from using NetSocial's services.",
+		})
+	}
+
 	// Add follower's user ID to the user's followers list
 	followedUserFilter := bson.M{"username": username}
 	followedUserUpdate := bson.M{"$addToSet": bson.M{"followers": followerID}}
