@@ -129,10 +129,11 @@ func GetCoterieByName(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	userIDToUsername := make(map[primitive.ObjectID]string)
+	// Updated cache to store both username and profilePicture
+	userIDToDetails := make(map[primitive.ObjectID]map[string]string)
 
 	// Fetch owner username and profile picture
-	ownerDetails, err := getUserDetails(userCollection, coterie.Owner, userIDToUsername)
+	ownerDetails, err := getUserDetails(userCollection, coterie.Owner, userIDToDetails)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
@@ -148,7 +149,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			})
 			continue
 		}
-		details, err := getUserDetails(userCollection, memberObjectID, userIDToUsername)
+		details, err := getUserDetails(userCollection, memberObjectID, userIDToDetails)
 		if err != nil {
 			memberDetails = append(memberDetails, map[string]interface{}{
 				"username":       "Unknown User",
@@ -197,7 +198,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 				})
 				continue
 			}
-			details, err := getUserDetails(userCollection, heartObjectID, userIDToUsername)
+			details, err := getUserDetails(userCollection, heartObjectID, userIDToDetails)
 			if err != nil {
 				heartsDetails = append(heartsDetails, map[string]interface{}{
 					"username":       "Unknown User",
@@ -261,21 +262,28 @@ func GetCoterieByName(c *fiber.Ctx) error {
 }
 
 // Helper function to fetch username and profile picture
-func getUserDetails(userCollection *mongo.Collection, userID primitive.ObjectID, cache map[primitive.ObjectID]string) (map[string]interface{}, error) {
-	if username, ok := cache[userID]; ok {
+func getUserDetails(userCollection *mongo.Collection, userID primitive.ObjectID, cache map[primitive.ObjectID]map[string]string) (map[string]interface{}, error) {
+	// Check if the user details are already cached (username and profile picture)
+	if userDetails, ok := cache[userID]; ok {
 		return map[string]interface{}{
-			"username":       username,
-			"profilePicture": "", // Adjust if the cache also stores profile pictures
+			"username":       userDetails["username"],
+			"profilePicture": userDetails["profilePicture"],
 		}, nil
 	}
 
+	// Fetch user details from database
 	var user types.User
 	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		return nil, err
 	}
 
-	cache[userID] = user.Username
+	// Cache the username and profile picture
+	cache[userID] = map[string]string{
+		"username":       user.Username,
+		"profilePicture": user.ProfilePicture,
+	}
+
 	return map[string]interface{}{
 		"username":       user.Username,
 		"profilePicture": user.ProfilePicture,
@@ -1119,6 +1127,7 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 			Avatar     string             `bson:"avatar"`
 			IsVerified bool               `bson:"isVerified"`
 			Owner      primitive.ObjectID `bson:"owner"`
+			Member     []string           `bson:"members" json:"members"`
 			Roles      struct {
 				Admins     []string `bson:"admins"`
 				Moderators []string `bson:"moderators"`
@@ -1136,12 +1145,13 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 		isModerator := contains(coterie.Roles.Moderators, userID.Hex())
 
 		coteries = append(coteries, fiber.Map{
-			"name":        coterie.Name,
-			"avatar":      coterie.Avatar,
-			"isVerified":  coterie.IsVerified,
-			"isOwner":     isOwner,
-			"isAdmin":     isAdmin,
-			"isModerator": isModerator,
+			"name":         coterie.Name,
+			"avatar":       coterie.Avatar,
+			"isVerified":   coterie.IsVerified,
+			"isOwner":      isOwner,
+			"isAdmin":      isAdmin,
+			"TotalMembers": len(coterie.Member),
+			"isModerator":  isModerator,
 		})
 	}
 
