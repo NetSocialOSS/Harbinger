@@ -84,6 +84,7 @@ func GetPostById(c *fiber.Ctx) error {
 			TimeAgo:        TimeAgo(comment.CreatedAt),
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
+			ProfilePicture: commentAuthor.ProfilePicture,
 			IsDeveloper:    commentAuthor.IsDeveloper,
 			Replies:        comment.Replies,
 			CreatedAt:      comment.CreatedAt,

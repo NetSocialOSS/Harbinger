@@ -65,6 +65,7 @@ type Comment struct {
 	IsPartner      bool               `json:"isPartner"`
 	AuthorName     string             `json:"authorName"`
 	CreatedAt      time.Time          `json:"createdAt"`
+	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
 	TimeAgo        string             `json:"timeAgo"`
 	IsOwner        bool               `json:"isOwner"`
 	IsDeveloper    bool               `json:"isDeveloper"`
@@ -113,6 +114,7 @@ type Coterie struct {
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
 	Banner         string                     `bson:"banner" json:"banner,omitempty"`
 	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
+	IsChatAllowed  bool                       `bson:"chatallowed" json:"chatallowed"`
 	IsVerified     bool                       `json:"isVerified"`
 	TotalPosts     int                        `json:"totalPosts,omitempty"`
 	Roles          map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`

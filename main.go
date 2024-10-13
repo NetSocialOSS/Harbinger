@@ -121,6 +121,9 @@ func main() {
 	// Admin
 	routes.Admin(app)
 
+	//Havok Chat
+	routes.HavokRoutes(app)
+
 	// Coterie
 	routes.CoterieRoutes(app)
 

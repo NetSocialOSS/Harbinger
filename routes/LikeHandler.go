@@ -54,7 +54,7 @@ func HeartPost(c *fiber.Ctx) error {
 
 	if user.IsBanned {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "You are banned from using NetSocial's services",
+			"error": "Hey there, you are banned from using NetSocial's services.",
 		})
 	}
 
