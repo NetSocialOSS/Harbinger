@@ -136,7 +136,7 @@ func PostMessage(c *fiber.Ctx) error {
 	defer cancel()
 
 	// Verify user exists
-	var user bson.M
+	var user types.User
 	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -149,7 +149,7 @@ func PostMessage(c *fiber.Ctx) error {
 		})
 	}
 
-	// Find the coterie and decode into types.Coterie
+	// Find the coterie
 	var coterie types.Coterie
 	err = coterieCollection.FindOne(ctx, bson.M{"name": coterieName}).Decode(&coterie)
 	if err != nil {
@@ -193,12 +193,12 @@ func PostMessage(c *fiber.Ctx) error {
 		})
 	}
 
-	// Create the message
-	message := bson.M{
-		"coterie":   coterieName,
-		"userID":    userID,
-		"content":   encryptedContent,
-		"createdAt": time.Now(),
+	// Create the message object
+	message := types.Message{
+		Coterie:   coterieName,
+		UserID:    userID,
+		Content:   encryptedContent,
+		CreatedAt: time.Now(),
 	}
 
 	// Insert the message into the messages collection
@@ -249,7 +249,7 @@ func FetchMessages(c *fiber.Ctx) error {
 	defer cancel()
 
 	// Verify user exists
-	var user bson.M
+	var user types.User
 	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -262,7 +262,7 @@ func FetchMessages(c *fiber.Ctx) error {
 		})
 	}
 
-	// Find the coterie and decode into types.Coterie
+	// Find the coterie
 	var coterie types.Coterie
 	err = coterieCollection.FindOne(ctx, bson.M{"name": coterieName}).Decode(&coterie)
 	if err != nil {
@@ -307,7 +307,7 @@ func FetchMessages(c *fiber.Ctx) error {
 	}
 	defer cursor.Close(ctx)
 
-	var messages []bson.M
+	var messages []types.Message
 	if err = cursor.All(ctx, &messages); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Error decoding messages: " + err.Error(),
@@ -318,7 +318,7 @@ func FetchMessages(c *fiber.Ctx) error {
 	var formattedMessages []fiber.Map
 	for _, message := range messages {
 		// Decrypt the content
-		decryptedContent, err := decrypt(message["content"].(string))
+		decryptedContent, err := decrypt(message.Content)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Error decrypting message content: " + err.Error(),
@@ -326,15 +326,8 @@ func FetchMessages(c *fiber.Ctx) error {
 		}
 
 		// Get the user who posted the message
-		messageUserID, ok := message["userID"].(primitive.ObjectID)
-		if !ok {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Invalid userID format in message",
-			})
-		}
-
-		var messageUser bson.M
-		err = userCollection.FindOne(ctx, bson.M{"_id": messageUserID}).Decode(&messageUser)
+		var messageUser types.User
+		err = userCollection.FindOne(ctx, bson.M{"_id": message.UserID}).Decode(&messageUser)
 		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 				"error": "Error fetching user data: " + err.Error(),
@@ -344,11 +337,11 @@ func FetchMessages(c *fiber.Ctx) error {
 		// Format the message with author details
 		formattedMessages = append(formattedMessages, fiber.Map{
 			"content":   string(decryptedContent),
-			"createdAt": message["createdAt"],
+			"createdAt": message.CreatedAt,
 			"author": fiber.Map{
-				"username":       messageUser["username"],
-				"profilePicture": messageUser["profilePicture"],
-				"profileBanner":  messageUser["profileBanner"],
+				"username":       messageUser.Username,
+				"profilePicture": messageUser.ProfilePicture,
+				"profileBanner":  messageUser.ProfileBanner,
 			},
 		})
 	}
