@@ -20,6 +20,21 @@ var (
 	postCache = ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100))
 )
 
+func init() {
+	go purgeCachePeriodically() // Start cache purging routine
+}
+
+func purgeCachePeriodically() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		userCache.Clear() // Purge user cache
+		postCache.Clear() // Purge post cache
+	}
+}
+
 func GetAllPosts(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
@@ -70,8 +85,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 				posts[i].Author = primitive.ObjectID{} // or set to default if necessary
 				continue
 			}
-			// Cache the author
-			userCache.Set(post.Author.Hex(), author, time.Minute*10)
+			// Cache the author with a 3-minute expiration
+			userCache.Set(post.Author.Hex(), author, time.Minute*3)
 		}
 
 		// Check if the author's account is private
@@ -110,8 +125,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 					continue
 				}
 				username := heartAuthor.Username
-				// Cache the entire author struct
-				userCache.Set(userID.Hex(), heartAuthor, time.Minute*10)
+				// Cache the entire author struct with a 3-minute expiration
+				userCache.Set(userID.Hex(), heartAuthor, time.Minute*3)
 				posts[i].Hearts[j] = username
 			} else {
 				// Assert the cached value to the correct type (Author)
@@ -124,8 +139,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 		visiblePosts = append(visiblePosts, posts[i])
 	}
 
-	// Cache the result of the posts for future requests
-	postCache.Set("all_posts", visiblePosts, time.Minute*1)
+	// Cache the result of the posts for future requests with a 3-minute expiration
+	postCache.Set("all_posts", visiblePosts, time.Minute*3)
 
 	// Return only visible posts (posts from non-private accounts)
 	return c.JSON(visiblePosts)
