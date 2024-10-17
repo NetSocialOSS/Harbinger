@@ -13,6 +13,10 @@ require (
 )
 
 require (
+	github.com/karlseguin/ccache/v2 v2.0.8 // indirect
+)
+
+require (
 	github.com/joho/godotenv v1.5.1 // direct
 	github.com/philhofer/fwd v1.1.2 // indirect
 	github.com/resend/resend-go/v2 v2.10.0 // direct
