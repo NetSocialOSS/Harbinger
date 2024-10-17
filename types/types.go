@@ -135,6 +135,14 @@ type WarningDetail struct {
 	Time   time.Time `bson:"time" json:"time"`
 }
 
+type Message struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	Coterie   string             `bson:"coterie" json:"coterie"`
+	UserID    primitive.ObjectID `bson:"userID" json:"userID"`
+	Content   string             `bson:"content" json:"content"`
+	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
+}
+
 type BlogPost struct {
 	Slug         string      `json:"slug"`
 	Title        string      `json:"title"`
