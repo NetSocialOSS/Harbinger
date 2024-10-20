@@ -56,6 +56,13 @@ type Author struct {
 	Username       string    `bson:"username" json:"username"`
 }
 
+type NewComment struct {
+	ID        primitive.ObjectID `bson:"_id" json:"_id"`
+	Content   string             `bson:"content" json:"content"`
+	Author    primitive.ObjectID `bson:"author" json:"-"`
+	CreatedAt time.Time          `json:"createdAt"`
+}
+
 type Comment struct {
 	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Content        string             `bson:"content" json:"content"`

@@ -45,7 +45,7 @@ func AddComment(c *fiber.Ctx) error {
 	}
 
 	// Create a new comment
-	comment := types.Comment{
+	comment := types.NewComment{
 		ID:        primitive.NewObjectID(),
 		Content:   content,
 		Author:    authorObjectID,
