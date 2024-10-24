@@ -110,7 +110,7 @@ func main() {
 	// Post routes with rate limiting
 	app.Get("/posts/@all", routes.GetAllPosts)
 	app.Get("/posts/:id", routes.GetPostById)
-	app.Post("/post/heart", limiter.New(rateLimitConfig), routes.HeartPost)
+	app.Post("/post/action", limiter.New(rateLimitConfig), routes.PostActions)
 	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
 	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)

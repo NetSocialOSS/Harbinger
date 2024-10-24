@@ -11,15 +11,30 @@ type Post struct {
 	Title         string             `bson:"title" json:"title"`
 	Content       string             `bson:"content" json:"content"`
 	Author        primitive.ObjectID `bson:"author" json:"-"`
-	AuthorName    string             `json:"authorName,omitempty"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string             `json:"timeAgo" bson:"timeAgo"`
+	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
 	Image         []string           `bson:"image" json:"image"`
 	Hearts        []string           `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	Poll          []Poll             `bson:"poll,omitempty" json:"poll,omitempty"`
 	Comments      []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
 	Coterie       string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
-	AuthorDetails Author             `json:"authorDetails,omitempty"`
+	AuthorDetails Author             `bson:"authorDetails,omitempty" json:"authorDetails,omitempty"`
+}
+
+type Poll struct {
+	ID         string    `bson:"_id" json:"_id"`
+	Options    []Options `bson:"options" json:"options"`
+	CreatedAt  time.Time `bson:"createdAt" json:"createdAt"`
+	TotalVotes int       `bson:"totalVotes" json:"totalVotes"`
+	Expiration time.Time `bson:"expiration" json:"expiration"`
+}
+
+type Options struct {
+	ID        string   `bson:"_id" json:"_id"`
+	Votes     []string `bson:"votes" json:"-"`
+	VoteCount int      `json:"voteCount"`
+	Name      string   `bson:"name" json:"name"`
 }
 
 type NewPost struct {

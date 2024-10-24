@@ -209,12 +209,32 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			heartsDetails = append(heartsDetails, details)
 		}
 
+		// Calculate total votes for polls if applicable
+		if post.Poll != nil {
+			totalVotes := 0
+			for i := range post.Poll {
+				for j := range post.Poll[i].Options {
+					optionVoteCount := len(post.Poll[i].Options[j].Votes)
+					totalVotes += optionVoteCount
+
+					// Clear votes from the response but set vote count
+					post.Poll[i].Options[j].Votes = nil
+					post.Poll[i].Options[j].VoteCount = optionVoteCount
+				}
+			}
+			// Set total votes for the first poll in the list
+			if len(post.Poll) > 0 {
+				post.Poll[0].TotalVotes = totalVotes
+			}
+		}
+
 		postMap := map[string]interface{}{
 			"_id":           post.ID,
 			"title":         post.Title,
 			"content":       post.Content,
 			"image":         post.Image,
 			"hearts":        heartsDetails,
+			"poll":          post.Poll,
 			"timeAgo":       calculateTimeAgo(post.CreatedAt),
 			"commentNumber": len(post.Comments),
 			"authorDetails": map[string]interface{}{
@@ -361,7 +381,7 @@ func AddNewCoterie(c *fiber.Ctx) error {
 		"_id":         primitive.NewObjectID(),
 		"name":        title,
 		"description": "",
-		"members":     []primitive.ObjectID{ownerObjectID},
+		"members":     []string{ownerObjectID.Hex()},
 		"owner":       ownerObjectID,
 		"banner":      "",
 		"avatar":      "",
