@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"netsocial/types"
 	"os"
@@ -229,6 +230,25 @@ func GetUserByName(c *fiber.Ctx) error {
 			hearts = append(hearts, username)
 		}
 
+		// Calculate total votes for polls if applicable
+		if post.Poll != nil {
+			totalVotes := 0
+			for i := range post.Poll {
+				for j := range post.Poll[i].Options {
+					optionVoteCount := len(post.Poll[i].Options[j].Votes)
+					totalVotes += optionVoteCount
+
+					// Clear votes from the response but set vote count
+					post.Poll[i].Options[j].Votes = nil
+					post.Poll[i].Options[j].VoteCount = optionVoteCount
+				}
+			}
+			// Set total votes for the first poll in the list
+			if len(post.Poll) > 0 {
+				post.Poll[0].TotalVotes = totalVotes
+			}
+		}
+
 		// Construct the post response data
 		postData := map[string]interface{}{
 			"_id":     post.ID,
@@ -244,6 +264,7 @@ func GetUserByName(c *fiber.Ctx) error {
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
 			},
+			"poll":          post.Poll,
 			"image":         post.Image,
 			"createdAt":     post.CreatedAt,
 			"hearts":        hearts,
@@ -381,21 +402,22 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	})
 }
 
-// FollowUser allows one user to follow another
-func FollowUser(c *fiber.Ctx) error {
+// Follow or Unfollow user
+func FollowOrUnfollowUser(c *fiber.Ctx) error {
 	db, ok := c.Locals("db").(*mongo.Client)
 	if !ok {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
 	}
 
-	username := c.Params("username")
-	followerID := c.Params("followerID")
+	username := c.Query("username")
+	followerID := c.Query("userId")
+	action := c.Query("action") // This could be either "follow" or "unfollow"
 
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	// Find the user to be followed
-	var userToBeFollowed bson.M
-	err := userCollection.FindOne(context.TODO(), bson.M{"username": username}).Decode(&userToBeFollowed)
+	// Find the user to be followed/unfollowed
+	var userToBeUpdated bson.M
+	err := userCollection.FindOne(context.TODO(), bson.M{"username": username}).Decode(&userToBeUpdated)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
@@ -404,12 +426,12 @@ func FollowUser(c *fiber.Ctx) error {
 	}
 
 	// Find the follower user
-	var followerUser bson.M
 	followerObjectID, err := primitive.ObjectIDFromHex(followerID)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid follower ID"})
 	}
 
+	var followerUser bson.M
 	err = userCollection.FindOne(context.TODO(), bson.M{"_id": followerObjectID}).Decode(&followerUser)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -419,61 +441,93 @@ func FollowUser(c *fiber.Ctx) error {
 	}
 
 	// Check if the follower user is banned
-	if isBanned, ok := followerUser["IsBanned"].(bool); ok && isBanned {
+	if isBanned, ok := followerUser["isbanned"].(bool); ok && isBanned {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
 			"error": "Hey there, you are banned from using NetSocial's services.",
 		})
 	}
 
-	// Add follower's user ID to the user's followers list
-	followedUserFilter := bson.M{"username": username}
-	followedUserUpdate := bson.M{"$addToSet": bson.M{"followers": followerID}}
-	_, err = userCollection.UpdateOne(context.TODO(), followedUserFilter, followedUserUpdate, options.Update().SetUpsert(false))
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error updating followers list"})
+	// Check if the followerID is the same as the userToBeUpdated ID
+	if userToBeUpdated["_id"] == followerUser["_id"] {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "My guy, you can't follow yourself! That's cheating!!"})
 	}
 
-	// Add followed user's ID to the follower's following list
-	followerUserFilter := bson.M{"_id": followerObjectID}
-	followerUserUpdate := bson.M{"$addToSet": bson.M{"following": userToBeFollowed["_id"].(primitive.ObjectID).Hex()}}
-	_, err = userCollection.UpdateOne(context.TODO(), followerUserFilter, followerUserUpdate, options.Update().SetUpsert(false))
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error updating following list"})
-	}
-
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Successfully followed user"})
-}
-
-func UnfollowUser(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
-	}
-
-	username := c.Params("username")
-	followerID := c.Params("followerID")
-
-	userCollection := db.Database("SocialFlux").Collection("users")
-
-	// Find the user to be unfollowed
-	var user bson.M
-	err := userCollection.FindOne(context.TODO(), bson.M{"username": username}).Decode(&user)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+	// Initialize followers and following if they are nil
+	if userToBeUpdated["followers"] == nil {
+		_, err := userCollection.UpdateOne(context.TODO(), bson.M{"username": username}, bson.M{"$set": bson.M{"followers": bson.A{}}})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to initialize followers list"})
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error finding user"})
+		userToBeUpdated["followers"] = bson.A{} // Update local variable to reflect change
+	}
+	if followerUser["following"] == nil {
+		_, err := userCollection.UpdateOne(context.TODO(), bson.M{"_id": followerObjectID}, bson.M{"$set": bson.M{"following": bson.A{}}})
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to initialize following list"})
+		}
+		followerUser["following"] = bson.A{} // Update local variable to reflect change
 	}
 
-	// Remove follower's user ID from the user's followers list
-	filter := bson.M{"username": username}
-	update := bson.M{"$pull": bson.M{"followers": followerID}}
-	_, err = userCollection.UpdateOne(context.TODO(), filter, update, options.Update().SetUpsert(false))
+	// Check if the follower is already following the user
+	followers := userToBeUpdated["followers"].(bson.A)
+	isAlreadyFollowing := false
+	for _, f := range followers {
+		if f == followerID {
+			isAlreadyFollowing = true
+			break
+		}
+	}
+
+	if action == "follow" && isAlreadyFollowing {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("My guy, you are already following %s", username)})
+	}
+
+	if action == "unfollow" && !isAlreadyFollowing {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("My guy, you aren't even following %s", username)})
+	}
+
+	// Determine the update operation based on the action
+	var followedUserUpdate bson.M
+	var followerUserUpdate bson.M
+
+	if action == "follow" {
+		// Add follower's user ID to the user's followers list
+		followedUserUpdate = bson.M{"$addToSet": bson.M{"followers": followerID}}
+		// Add followed user's ID to the follower's following list
+		followerUserUpdate = bson.M{"$addToSet": bson.M{"following": userToBeUpdated["_id"].(primitive.ObjectID).Hex()}}
+	} else if action == "unfollow" {
+		// Remove follower's user ID from the user's followers list
+		followedUserUpdate = bson.M{"$pull": bson.M{"followers": followerID}}
+		// Remove followed user's ID from the follower's following list
+		followerUserUpdate = bson.M{"$pull": bson.M{"following": userToBeUpdated["_id"].(primitive.ObjectID).Hex()}}
+	} else {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid action"})
+	}
+
+	// Update the user being followed/unfollowed
+	followedUserFilter := bson.M{"username": username}
+	_, err = userCollection.UpdateOne(context.TODO(), followedUserFilter, followedUserUpdate)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error updating followers list"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Error updating followers list for user %s: %v", username, err)})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Successfully unfollowed user"})
+	// Update the follower user
+	followerUserFilter := bson.M{"_id": followerObjectID}
+	_, err = userCollection.UpdateOne(context.TODO(), followerUserFilter, followerUserUpdate)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Error updating following list for user %s: %v", followerUser["username"], err)})
+	}
+
+	// Format the success message
+	actionMessage := "followed"
+	if action == "unfollow" {
+		actionMessage = "unfollowed"
+	}
+
+	// Use fmt.Sprintf to format the success message correctly
+	successMessage := fmt.Sprintf("Successfully %s %s", actionMessage, username)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": successMessage})
 }
 
 // TogglePrivacy allows a user to toggle the privacy of their profile (isPrivate field)
@@ -554,7 +608,6 @@ func User(app *fiber.App) {
 	app.Post("/user/account/delete", limiter.New(rateLimitConfig), deleteAccount)
 	app.Get("/user/:username", GetUserByName)
 	app.Post("/profile/settings", limiter.New(rateLimitConfig), UpdateProfileSettings)
-	app.Post("/follow/:username/:followerID", limiter.New(rateLimitConfig), FollowUser)
-	app.Post("/unfollow/:username/:followerID", limiter.New(rateLimitConfig), UnfollowUser)
+	app.Post("/user/FollowOrUnfollowUser", limiter.New(rateLimitConfig), FollowOrUnfollowUser)
 	app.Post("/user/settings/privacy", limiter.New(rateLimitConfig), TogglePrivacy)
 }

@@ -94,6 +94,23 @@ func GetAllPosts(c *fiber.Ctx) error {
 			continue // Skip this post if the author's account is private
 		}
 
+		if post.Poll != nil { // Check if the post has polls
+			totalVotes := 0
+			for _, poll := range post.Poll {
+				for j := range poll.Options {
+					optionVoteCount := len(poll.Options[j].Votes)
+					totalVotes += optionVoteCount
+
+					poll.Options[j].Votes = nil // Clear votes for the response
+					poll.Options[j].VoteCount = optionVoteCount
+				}
+			}
+			// Set total votes for the last poll or aggregate if needed
+			if len(post.Poll) > 0 {
+				post.Poll[0].TotalVotes = totalVotes
+			}
+		}
+
 		// Update post author details if user is not private
 		posts[i].Author = post.Author
 		posts[i].AuthorDetails = author // Set the author details
