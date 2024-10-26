@@ -168,6 +168,7 @@ func UserSignup(c *fiber.Ctx) error {
 		DisplayName:    username,
 		IsVerified:     false,
 		IsOrganisation: false,
+		ProfilePicture: "https://cdn.netsocial.app/logos/netsocial.png",
 		IsDeveloper:    false,
 		IsOwner:        false,
 		IsPartner:      false,
