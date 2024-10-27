@@ -13,6 +13,7 @@ type Post struct {
 	Author        primitive.ObjectID `bson:"author" json:"-"`
 	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
 	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
+	ScheduledFor  time.Time          `bson:"scheduledFor" json:"scheduledFor"`
 	Image         []string           `bson:"image" json:"image"`
 	Hearts        []string           `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
@@ -38,15 +39,16 @@ type Options struct {
 }
 
 type NewPost struct {
-	ID        string             `json:"id,omitempty" bson:"_id,omitempty"`
-	Title     string             `json:"title"`
-	Content   string             `json:"content"`
-	Author    primitive.ObjectID `json:"author"`
-	Image     []string           `json:"image,omitempty"`
-	Coterie   string             `json:"coterie"`
-	Hearts    []string           `json:"hearts,omitempty"`
-	CreatedAt time.Time          `json:"createdAt" bson:"createdAt"`
-	Comments  []string           `json:"comments,omitempty" bson:"comments,omitempty"`
+	ID           string             `json:"id,omitempty" bson:"_id,omitempty"`
+	Title        string             `json:"title"`
+	Content      string             `json:"content"`
+	Author       primitive.ObjectID `json:"author"`
+	Image        []string           `json:"image,omitempty"`
+	ScheduledFor time.Time          `bson:"scheduledFor" json:"scheduledFor"`
+	Coterie      string             `json:"coterie"`
+	Hearts       []string           `json:"hearts,omitempty"`
+	CreatedAt    time.Time          `json:"createdAt" bson:"createdAt"`
+	Comments     []string           `json:"comments,omitempty" bson:"comments,omitempty"`
 }
 
 type UserSettingsUpdate struct {

@@ -54,6 +54,7 @@ func AddPost(c *fiber.Ctx) error {
 	userId := c.Query("userId")
 	image := c.Query("image")
 	coterieName := c.Query("coterie")
+	scheduledForStr := c.Query("scheduledFor")
 
 	if title == "" || content == "" || userId == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -116,6 +117,17 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
+	// Parse the ScheduledFor string to time.Time
+	var scheduledFor time.Time
+	if scheduledForStr != "" {
+		scheduledFor, err = time.Parse(time.RFC3339, scheduledForStr)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Invalid format for scheduled time",
+			})
+		}
+	}
+
 	// Create the post document
 	post := bson.M{
 		"_id":       postID,
@@ -128,6 +140,10 @@ func AddPost(c *fiber.Ctx) error {
 
 	if coterieName != "" {
 		post["coterie"] = coterieName
+	}
+
+	if !scheduledFor.IsZero() {
+		post["scheduledFor"] = scheduledFor // Add as time.Time
 	}
 
 	// Add the Image field only if image URLs are provided

@@ -742,8 +742,8 @@ func WarnMember(c *fiber.Ctx) error {
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	name := c.Query("name")
-	membername := c.Query("membername")
+	name := c.Query("CoterieName")
+	membername := c.Query("username")
 	modIDStr := c.Query("modID")
 	reason := c.Query("reason")
 
@@ -885,9 +885,9 @@ func promoteMember(c *fiber.Ctx) error {
 	// Parse and validate parameters from request body or query
 	coterieName := c.FormValue("CoterieName")
 	role := c.FormValue("role")
-	memberName := c.FormValue("MemberName")
-	promoterIDStr := c.FormValue("PromoterID")
-	action := c.FormValue("action") // Added parameter to specify 'promote' or 'remove'
+	memberName := c.FormValue("username")
+	promoterIDStr := c.FormValue("modID")
+	action := c.FormValue("action") // Added parameter to specify 'promote' or 'demote'
 
 	// Convert promoterIDStr to ObjectID
 	promoterID, err := primitive.ObjectIDFromHex(promoterIDStr)
@@ -1001,7 +1001,7 @@ func BanUser(c *fiber.Ctx) error {
 	defer cancel()
 
 	// Parse query parameters
-	coterieName := c.Query("name")
+	coterieName := c.Query("CoterieName")
 	username := c.Query("username")
 	modID := c.Query("modID")
 
