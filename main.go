@@ -114,6 +114,7 @@ func main() {
 	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
 	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
 	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
+	app.Get("/link/extract", routes.ExtractLinkPreview)
 
 	// Report
 	routes.Report(app)

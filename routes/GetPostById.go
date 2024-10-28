@@ -37,6 +37,7 @@ func GetPostById(c *fiber.Ctx) error {
 		"content":   1,
 		"author":    1,
 		"createdAt": 1,
+		"poll":      1,
 		"hearts":    1,
 		"image":     1, // Updated field to "image"
 		"comments":  1, // Fetch all comments
@@ -84,6 +85,7 @@ func GetPostById(c *fiber.Ctx) error {
 			TimeAgo:        TimeAgo(comment.CreatedAt),
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
+			IsModerator:    commentAuthor.IsModerator,
 			ProfilePicture: commentAuthor.ProfilePicture,
 			IsDeveloper:    commentAuthor.IsDeveloper,
 			Replies:        comment.Replies,
@@ -115,6 +117,25 @@ func GetPostById(c *fiber.Ctx) error {
 		hearts = append(hearts, heartAuthor.Username)
 	}
 
+	// Calculate total votes for polls if applicable
+	if post.Poll != nil {
+		totalVotes := 0
+		for i := range post.Poll {
+			for j := range post.Poll[i].Options {
+				optionVoteCount := len(post.Poll[i].Options[j].Votes)
+				totalVotes += optionVoteCount
+
+				// Clear votes from the response but set vote count
+				post.Poll[i].Options[j].Votes = nil
+				post.Poll[i].Options[j].VoteCount = optionVoteCount
+			}
+		}
+		// Set total votes for the first poll in the list
+		if len(post.Poll) > 0 {
+			post.Poll[0].TotalVotes = totalVotes
+		}
+	}
+
 	// Construct the response data
 	responseData := map[string]interface{}{
 		"_id":     post.ID,
@@ -129,9 +150,11 @@ func GetPostById(c *fiber.Ctx) error {
 			"isDeveloper":    author.IsDeveloper,
 			"isPartner":      author.IsPartner,
 			"isOwner":        author.IsOwner,
+			"isModerator":    author.IsModerator,
 			"createdAt":      author.CreatedAt,
 		},
 		"createdAt": post.CreatedAt,
+		"poll":      post.Poll,
 		"hearts":    hearts,
 		"comments":  comments,
 	}

@@ -32,10 +32,10 @@ type Poll struct {
 }
 
 type Options struct {
-	ID        string   `bson:"_id" json:"_id"`
-	Votes     []string `bson:"votes" json:"-"`
-	VoteCount int      `json:"voteCount"`
-	Name      string   `bson:"name" json:"name"`
+	ID        primitive.ObjectID `bson:"_id" json:"_id"`
+	Votes     []string           `bson:"votes" json:"-"`
+	VoteCount int                `json:"voteCount"`
+	Name      string             `bson:"name" json:"name"`
 }
 
 type NewPost struct {
@@ -68,6 +68,7 @@ type Author struct {
 	ProfilePicture string    `json:"profilePicture,omitempty"`
 	ProfileBanner  string    `json:"profileBanner,omitempty"`
 	IsOwner        bool      `json:"isOwner"`
+	IsModerator    bool      `json:"isModerator"`
 	IsOrganisation bool      `json:"isOrganisation"`
 	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
 	Username       string    `bson:"username" json:"username"`
@@ -86,6 +87,7 @@ type Comment struct {
 	Author         primitive.ObjectID `bson:"author" json:"-"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
+	IsModerator    bool               `json:"isModerator"`
 	IsPartner      bool               `json:"isPartner"`
 	AuthorName     string             `json:"authorName"`
 	CreatedAt      time.Time          `json:"createdAt"`
@@ -111,6 +113,7 @@ type User struct {
 	IsDeveloper    bool               `json:"isDeveloper"`
 	IsPartner      bool               `json:"isPartner"`
 	IsOwner        bool               `json:"isOwner"`
+	IsModerator    bool               `json:"isModerator"`
 	IsPrivate      bool               `bson:"isPrivate" json:"isPrivate"`
 	IsBanned       bool               `json:"isBanned"`
 	Session        []Session          `bson:"session" json:"session"`
@@ -187,6 +190,14 @@ type Partner struct {
 	Title  string `json:"title,omitempty" bson:"title,omitempty"`
 	Text   string `json:"text,omitempty" bson:"text,omitempty"`
 	Link   string `json:"link,omitempty" bson:"link,omitempty"`
+}
+
+type LinkPreview struct {
+	URL         string   `json:"url"`
+	Images      []string `json:"images"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Domain      string   `json:"domain"`
 }
 
 /*
