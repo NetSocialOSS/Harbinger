@@ -84,12 +84,13 @@ func GetAllCoterie(c *fiber.Ctx) error {
 		}
 
 		coterieMap := map[string]interface{}{
-			"name":         coterie.Name,
-			"description":  coterie.Description,
-			"createdAt":    coterie.CreatedAt,
-			"isVerified":   coterie.IsVerified,
-			"TotalMembers": len(memberUsernames),
-			"PostsCount":   postCount,
+			"name":           coterie.Name,
+			"description":    coterie.Description,
+			"createdAt":      coterie.CreatedAt,
+			"isVerified":     coterie.IsVerified,
+			"isOrganisation": coterie.IsOrganisation,
+			"TotalMembers":   len(memberUsernames),
+			"PostsCount":     postCount,
 		}
 
 		if coterie.Avatar != "" {
@@ -259,15 +260,16 @@ func GetCoterieByName(c *fiber.Ctx) error {
 
 	// Prepare final result
 	result := map[string]interface{}{
-		"name":         coterie.Name,
-		"description":  coterie.Description,
-		"members":      memberDetails,
-		"owner":        ownerDetails,
-		"isVerified":   coterie.IsVerified,
-		"TotalPosts":   len(posts),
-		"createdAt":    coterie.CreatedAt,
-		"TotalMembers": len(memberDetails),
-		"Post":         posts,
+		"name":           coterie.Name,
+		"description":    coterie.Description,
+		"members":        memberDetails,
+		"owner":          ownerDetails,
+		"isVerified":     coterie.IsVerified,
+		"isOrganisation": coterie.IsOrganisation,
+		"TotalPosts":     len(posts),
+		"createdAt":      coterie.CreatedAt,
+		"TotalMembers":   len(memberDetails),
+		"Post":           posts,
 	}
 
 	// Conditionally add avatar and banner
@@ -1173,14 +1175,15 @@ func GetCoteriesByUserID(c *fiber.Ctx) error {
 		}
 
 		coteries = append(coteries, fiber.Map{
-			"name":          coterie.Name,
-			"avatar":        coterie.Avatar,
-			"isVerified":    coterie.IsVerified,
-			"isChatAllowed": coterie.IsChatAllowed,
-			"isOwner":       isOwner,
-			"isAdmin":       isAdmin,
-			"TotalMembers":  len(coterie.Members),
-			"isModerator":   isModerator,
+			"name":           coterie.Name,
+			"avatar":         coterie.Avatar,
+			"isVerified":     coterie.IsVerified,
+			"isChatAllowed":  coterie.IsChatAllowed,
+			"isOwner":        isOwner,
+			"isOrganisation": coterie.IsOrganisation,
+			"isAdmin":        isAdmin,
+			"TotalMembers":   len(coterie.Members),
+			"isModerator":    isModerator,
 		})
 	}
 
