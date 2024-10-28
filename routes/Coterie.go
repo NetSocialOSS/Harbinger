@@ -245,6 +245,7 @@ func GetCoterieByName(c *fiber.Ctx) error {
 				"profilePicture": author.ProfilePicture,
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
+				"isModerator":    author.IsModerator,
 				"username":       author.Username,
 			},
 		}
