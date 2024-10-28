@@ -32,10 +32,10 @@ type Poll struct {
 }
 
 type Options struct {
-	ID        string   `bson:"_id" json:"_id"`
-	Votes     []string `bson:"votes" json:"-"`
-	VoteCount int      `json:"voteCount"`
-	Name      string   `bson:"name" json:"name"`
+	ID        primitive.ObjectID `bson:"_id" json:"_id"`
+	Votes     []string           `bson:"votes" json:"-"`
+	VoteCount int                `json:"voteCount"`
+	Name      string             `bson:"name" json:"name"`
 }
 
 type NewPost struct {
@@ -187,6 +187,14 @@ type Partner struct {
 	Title  string `json:"title,omitempty" bson:"title,omitempty"`
 	Text   string `json:"text,omitempty" bson:"text,omitempty"`
 	Link   string `json:"link,omitempty" bson:"link,omitempty"`
+}
+
+type LinkPreview struct {
+	URL         string   `json:"url"`
+	Images      []string `json:"images"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Domain      string   `json:"domain"`
 }
 
 /*
