@@ -138,6 +138,7 @@ type Coterie struct {
 	Members        []string                   `bson:"members" json:"members"`
 	Owner          primitive.ObjectID         `bson:"owner" json:"owner"`
 	OwnerUsername  string                     `json:"ownerUsername,omitempty"`
+	IsOrganisation bool                       `json:"isOrganisation"`
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
 	Banner         string                     `bson:"banner" json:"banner,omitempty"`
 	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
