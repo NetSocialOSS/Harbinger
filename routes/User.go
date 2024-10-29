@@ -250,6 +250,18 @@ func GetUserByName(c *fiber.Ctx) error {
 			}
 		}
 
+		// Get current time
+		now := time.Now()
+
+		// Check the scheduled time
+		if !post.ScheduledFor.IsZero() {
+			if post.ScheduledFor.After(now) {
+				// Post is scheduled for the future, skip it
+				continue
+			}
+			// If the scheduledFor is today or in the past, we continue to process the post
+		}
+
 		// Construct the post response data
 		postData := map[string]interface{}{
 			"_id":     post.ID,
@@ -271,6 +283,9 @@ func GetUserByName(c *fiber.Ctx) error {
 			"createdAt":     post.CreatedAt,
 			"hearts":        hearts,
 			"commentNumber": len(post.Comments),
+		}
+		if !post.ScheduledFor.IsZero() {
+			postData["scheduledFor"] = post.ScheduledFor
 		}
 		posts = append(posts, postData)
 	}

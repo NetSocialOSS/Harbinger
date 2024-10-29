@@ -194,16 +194,14 @@ func GetCoterieByName(c *fiber.Ctx) error {
 			heartObjectID, err := primitive.ObjectIDFromHex(heartID)
 			if err != nil {
 				heartsDetails = append(heartsDetails, map[string]interface{}{
-					"username":       "Invalid ID",
-					"profilePicture": "",
+					"username": "Invalid ID",
 				})
 				continue
 			}
 			details, err := getUserDetails(userCollection, heartObjectID, userIDToDetails)
 			if err != nil {
 				heartsDetails = append(heartsDetails, map[string]interface{}{
-					"username":       "Unknown User",
-					"profilePicture": "",
+					"username": "Unknown User",
 				})
 				continue
 			}
@@ -228,7 +226,17 @@ func GetCoterieByName(c *fiber.Ctx) error {
 				post.Poll[0].TotalVotes = totalVotes
 			}
 		}
+		// Get current time
+		now := time.Now()
 
+		// Check the scheduled time
+		if !post.ScheduledFor.IsZero() {
+			if post.ScheduledFor.After(now) {
+				// Post is scheduled for the future, skip it
+				continue
+			}
+			// If the scheduledFor is today or in the past, we continue to process the post
+		}
 		postMap := map[string]interface{}{
 			"_id":           post.ID,
 			"title":         post.Title,
@@ -247,8 +255,10 @@ func GetCoterieByName(c *fiber.Ctx) error {
 				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
 				"isModerator":    author.IsModerator,
-				"username":       author.Username,
-			},
+				"username":       author.Username},
+		}
+		if !post.ScheduledFor.IsZero() {
+			postMap["scheduledFor"] = post.ScheduledFor
 		}
 		posts = append(posts, postMap)
 	}
