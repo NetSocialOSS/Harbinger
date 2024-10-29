@@ -69,7 +69,9 @@ func GetAllPosts(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 
-	var visiblePosts []types.Post // A slice to store posts that can be shown
+	var visiblePosts []fiber.Map // A slice to store formatted posts
+
+	now := time.Now() // Current time for comparison
 
 	for i, post := range posts {
 		var author types.Author
@@ -111,49 +113,70 @@ func GetAllPosts(c *fiber.Ctx) error {
 			}
 		}
 
-		// Update post author details if user is not private
-		posts[i].Author = post.Author
-		posts[i].AuthorDetails = author // Set the author details
+		// Check the scheduled time
+		if !post.ScheduledFor.IsZero() {
+			if post.ScheduledFor.After(now) {
+				// Post is scheduled for the future, skip it
+				continue
+			}
+			// If the scheduledFor is today or in the past, we continue to process the post
+		}
 
-		// Calculate time ago
-		posts[i].TimeAgo = calculateTimeAgo(post.CreatedAt)
-
-		// Calculate number of comments
-		posts[i].CommentNumber = len(post.Comments)
-
-		// Remove comments from the post object
-		posts[i].Comments = nil
-		// Update hearts with author usernames
-		for j, heart := range post.Hearts {
+		// Prepare hearts details
+		var heartsDetails []string
+		for _, heart := range post.Hearts {
 			userID, err := primitive.ObjectIDFromHex(heart)
 			if err != nil {
-				posts[i].Hearts[j] = "Unknown"
+				heartsDetails = append(heartsDetails, "Unknown")
 				continue
 			}
 
 			// Check if the username is already cached
-			cachedAuthor := userCache.Get(userID.Hex())
-			if cachedAuthor == nil {
+			cachedHeartAuthor := userCache.Get(userID.Hex())
+			if cachedHeartAuthor == nil {
 				var heartAuthor types.Author
 				err := usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&heartAuthor)
 				if err != nil {
-					// Handle error (user not found)
-					posts[i].Hearts[j] = "Unknown"
+					heartsDetails = append(heartsDetails, "Unknown")
 					continue
 				}
-				username := heartAuthor.Username
+				heartsDetails = append(heartsDetails, heartAuthor.Username)
 				// Cache the entire author struct with a 3-minute expiration
 				userCache.Set(userID.Hex(), heartAuthor, time.Minute*3)
-				posts[i].Hearts[j] = username
 			} else {
 				// Assert the cached value to the correct type (Author)
-				author := cachedAuthor.Value().(types.Author)
-				posts[i].Hearts[j] = author.Username
+				author := cachedHeartAuthor.Value().(types.Author)
+				heartsDetails = append(heartsDetails, author.Username)
 			}
 		}
 
-		// Add post to the visible posts slice
-		visiblePosts = append(visiblePosts, posts[i])
+		postResponse := fiber.Map{
+			"_id":           post.ID,
+			"title":         post.Title,
+			"content":       post.Content,
+			"image":         post.Image,
+			"hearts":        heartsDetails,
+			"poll":          post.Poll,
+			"timeAgo":       calculateTimeAgo(post.CreatedAt),
+			"commentNumber": len(post.Comments),
+			"authorDetails": fiber.Map{
+				"isVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"isDeveloper":    author.IsDeveloper,
+				"profilePicture": author.ProfilePicture,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
+				"isModerator":    author.IsModerator,
+				"username":       author.Username,
+			},
+		}
+
+		if !post.ScheduledFor.IsZero() {
+			postResponse["scheduledFor"] = post.ScheduledFor
+		}
+
+		// Add the formatted post to the visible posts slice
+		visiblePosts = append(visiblePosts, postResponse)
 	}
 
 	// Cache the result of the posts for future requests with a 3-minute expiration
