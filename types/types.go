@@ -143,6 +143,7 @@ type Session struct {
 	Device    string             `bson:"device"`
 	StartedAt time.Time          `bson:"started_at"`
 	ExpiresAt time.Time          `bson:"expires_at"`
+	Token     string             `bson:"token"`
 }
 
 type Coterie struct {
