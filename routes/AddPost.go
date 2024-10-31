@@ -2,6 +2,7 @@ package routes
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"strings"
@@ -55,7 +56,37 @@ func AddPost(c *fiber.Ctx) error {
 	image := c.Query("image")
 	coterieName := c.Query("coterie")
 	scheduledForStr := c.Query("scheduledFor")
+	optionsStr := c.Query("options")
+	expirationStr := c.Query("expiration")
 
+	// Split options by comma
+	options := strings.Split(optionsStr, ",")
+	var validOptions []string
+
+	// Trim whitespace from each option
+	for _, option := range options {
+		trimmedOption := strings.TrimSpace(option)
+		if trimmedOption != "" {
+			validOptions = append(validOptions, trimmedOption)
+		}
+	}
+
+	// Validate that we have at least 2 and no more than 4 options
+	if len(validOptions) < 2 || len(validOptions) > 4 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "Please provide between 2 and 4 poll options",
+		})
+	}
+
+	// Parse expiration date directly to time.Time
+	expirationTime, err := time.Parse(time.RFC3339, expirationStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr),
+		})
+	}
+
+	// Remaining validation...
 	if title == "" || content == "" || userId == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "Title, content, and user ID are required",
@@ -80,12 +111,12 @@ func AddPost(c *fiber.Ctx) error {
 
 	if user.IsBanned {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"message": "Hey there, you are banned from using NetSocial's services.",
+			"message": "You are banned from using NetSocial's services.",
 		})
 	}
 
+	// Validate coterie membership
 	if coterieName != "" {
-		// Check if the user is a member of the coterie
 		var coterie types.Coterie
 		err = coteriesCollection.FindOne(c.Context(), bson.M{"name": coterieName}).Decode(&coterie)
 		if err != nil {
@@ -117,7 +148,7 @@ func AddPost(c *fiber.Ctx) error {
 		})
 	}
 
-	// Parse the ScheduledFor string to time.Time
+	// Parse ScheduledFor time
 	var scheduledFor time.Time
 	if scheduledForStr != "" {
 		scheduledFor, err = time.Parse(time.RFC3339, scheduledForStr)
@@ -126,6 +157,25 @@ func AddPost(c *fiber.Ctx) error {
 				"error": "Invalid format for scheduled time",
 			})
 		}
+	}
+
+	// Process poll options
+	var pollOptions []bson.M
+	for _, option := range validOptions {
+		optionID := primitive.NewObjectID()
+		pollOptions = append(pollOptions, bson.M{
+			"_id":   optionID,
+			"name":  option,
+			"votes": []string{},
+		})
+	}
+
+	// Construct the poll object
+	poll := bson.M{
+		"_id":        postID,
+		"options":    pollOptions,
+		"createdAt":  time.Now(),
+		"expiration": expirationTime, // Use time.Time directly
 	}
 
 	// Create the post document
@@ -143,7 +193,7 @@ func AddPost(c *fiber.Ctx) error {
 	}
 
 	if !scheduledFor.IsZero() {
-		post["scheduledFor"] = scheduledFor // Add as time.Time
+		post["scheduledFor"] = scheduledFor
 	}
 
 	// Add the Image field only if image URLs are provided
@@ -153,6 +203,9 @@ func AddPost(c *fiber.Ctx) error {
 		})
 		post["image"] = imageArray
 	}
+
+	// Include the poll in the post
+	post["poll"] = []bson.M{poll}
 
 	_, err = postsCollection.InsertOne(c.Context(), post)
 	if err != nil {

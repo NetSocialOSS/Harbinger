@@ -134,8 +134,8 @@ func PostActions(c *fiber.Ctx) error {
 		}
 		arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
 			Filters: []interface{}{
-				bson.M{"poll._id": post.Poll[0].ID},  // Assuming the poll ID is unique to this post
-				bson.M{"option._id": optionObjectID}, // Use `optionObjectID` to match ObjectID type
+				bson.M{"poll._id": post.Poll[0].ID},
+				bson.M{"option._id": optionObjectID},
 			},
 		})
 

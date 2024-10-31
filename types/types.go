@@ -48,7 +48,21 @@ type NewPost struct {
 	Coterie      string             `json:"coterie"`
 	Hearts       []string           `json:"hearts,omitempty"`
 	CreatedAt    time.Time          `json:"createdAt" bson:"createdAt"`
+	Poll         []NewPoll          `bson:"poll,omitempty" json:"poll,omitempty"`
 	Comments     []string           `json:"comments,omitempty" bson:"comments,omitempty"`
+}
+
+type NewPoll struct {
+	ID         string       `bson:"_id" json:"_id"`
+	Options    []NewOptions `bson:"options" json:"options"`
+	CreatedAt  time.Time    `bson:"createdAt" json:"createdAt"`
+	Expiration time.Time    `bson:"expiration" json:"expiration"`
+}
+
+type NewOptions struct {
+	ID    primitive.ObjectID `bson:"_id" json:"_id"`
+	Votes []string           `bson:"votes" json:"-"`
+	Name  string             `bson:"name" json:"name"`
 }
 
 type UserSettingsUpdate struct {

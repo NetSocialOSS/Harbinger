@@ -95,7 +95,7 @@ func sendWelcomeEmail(email string) error {
 		From:    "Netsocial <welcome@netsocial.app>",
 		To:      []string{email},
 		Subject: "Welcome to Netsocial!",
-		Text:    "Hey, welcome to Netsocial! Let's start by making your first post. [Post Now!](https://netsocial.app/post)",
+		Text:    "Hey, welcome to Netsocial! Let's start by making your first post. [Post Now!](https://netsocial.app/post/new)",
 	}
 	_, err := client.Emails.Send(params)
 	return err
