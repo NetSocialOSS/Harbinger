@@ -59,31 +59,24 @@ func AddPost(c *fiber.Ctx) error {
 	optionsStr := c.Query("options")
 	expirationStr := c.Query("expiration")
 
-	// Split options by comma
-	options := strings.Split(optionsStr, ",")
+	// Split options by comma only if optionsStr is provided
 	var validOptions []string
-
-	// Trim whitespace from each option
-	for _, option := range options {
-		trimmedOption := strings.TrimSpace(option)
-		if trimmedOption != "" {
-			validOptions = append(validOptions, trimmedOption)
+	if optionsStr != "" {
+		options := strings.Split(optionsStr, ",")
+		// Trim whitespace from each option
+		for _, option := range options {
+			trimmedOption := strings.TrimSpace(option)
+			if trimmedOption != "" {
+				validOptions = append(validOptions, trimmedOption)
+			}
 		}
-	}
 
-	// Validate that we have at least 2 and no more than 4 options
-	if len(validOptions) < 2 || len(validOptions) > 4 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Please provide between 2 and 4 poll options",
-		})
-	}
-
-	// Parse expiration date directly to time.Time
-	expirationTime, err := time.Parse(time.RFC3339, expirationStr)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr),
-		})
+		// Validate that we have at least 2 and no more than 4 options if provided
+		if len(validOptions) < 2 || len(validOptions) > 4 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Please provide between 2 and 4 poll options",
+			})
+		}
 	}
 
 	// Remaining validation...
@@ -159,23 +152,37 @@ func AddPost(c *fiber.Ctx) error {
 		}
 	}
 
-	// Process poll options
-	var pollOptions []bson.M
-	for _, option := range validOptions {
-		optionID := primitive.NewObjectID()
-		pollOptions = append(pollOptions, bson.M{
-			"_id":   optionID,
-			"name":  option,
-			"votes": []string{},
-		})
-	}
+	// Process poll options only if valid options exist
+	var poll bson.M
+	if len(validOptions) > 0 {
+		var pollOptions []bson.M
+		for _, option := range validOptions {
+			optionID := primitive.NewObjectID()
+			pollOptions = append(pollOptions, bson.M{
+				"_id":   optionID,
+				"name":  option,
+				"votes": []string{},
+			})
+		}
 
-	// Construct the poll object
-	poll := bson.M{
-		"_id":        postID,
-		"options":    pollOptions,
-		"createdAt":  time.Now(),
-		"expiration": expirationTime, // Use time.Time directly
+		// Construct the poll object
+		poll = bson.M{
+			"_id":        postID,
+			"options":    pollOptions,
+			"createdAt":  time.Now(),
+			"expiration": time.Time{}, // Default to zero value if not specified
+		}
+
+		// Only parse expiration if it is provided
+		if expirationStr != "" {
+			expirationTime, err := time.Parse(time.RFC3339, expirationStr)
+			if err != nil {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+					"error": fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr),
+				})
+			}
+			poll["expiration"] = expirationTime // Set the parsed expiration time
+		}
 	}
 
 	// Create the post document
@@ -204,8 +211,10 @@ func AddPost(c *fiber.Ctx) error {
 		post["image"] = imageArray
 	}
 
-	// Include the poll in the post
-	post["poll"] = []bson.M{poll}
+	// Include the poll in the post if it exists
+	if poll != nil {
+		post["poll"] = []bson.M{poll}
+	}
 
 	_, err = postsCollection.InsertOne(c.Context(), post)
 	if err != nil {
