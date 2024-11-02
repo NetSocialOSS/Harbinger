@@ -2,19 +2,21 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func getCount(c *fiber.Ctx, collectionName string, fieldName string) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+// getCount retrieves the count of documents from the specified collection
+func getCount(w http.ResponseWriter, r *http.Request, collectionName string, fieldName string) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 
 	collection := db.Database("SocialFlux").Collection(collectionName)
@@ -22,33 +24,39 @@ func getCount(c *fiber.Ctx, collectionName string, fieldName string) error {
 	countOptions := options.Count()
 	total, err := collection.CountDocuments(context.Background(), bson.M{}, countOptions)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error counting documents",
-		})
+		http.Error(w, "Error counting documents", http.StatusInternalServerError)
+		return
 	}
 
-	return c.JSON(fiber.Map{fieldName: total})
+	// Return the total count as JSON
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{fieldName: total})
 }
 
-func RegistergedUserNum(c *fiber.Ctx) error {
-	return getCount(c, "users", "total_registered_user")
+// RegistergedUserNum retrieves the count of registered users
+func RegistergedUserNum(w http.ResponseWriter, r *http.Request) {
+	getCount(w, r, "users", "total_registered_user")
 }
 
-func TotalPartnersCount(c *fiber.Ctx) error {
-	return getCount(c, "partners", "total_partner")
+// TotalPartnersCount retrieves the count of partners
+func TotalPartnersCount(w http.ResponseWriter, r *http.Request) {
+	getCount(w, r, "partners", "total_partner")
 }
 
-func TotalPostsCount(c *fiber.Ctx) error {
-	return getCount(c, "posts", "total_posts")
+// TotalPostsCount retrieves the count of posts
+func TotalPostsCount(w http.ResponseWriter, r *http.Request) {
+	getCount(w, r, "posts", "total_posts")
 }
 
-func TotalCoterieCount(c *fiber.Ctx) error {
-	return getCount(c, "coterie", "total_coteries")
+// TotalCoterieCount retrieves the count of coteries
+func TotalCoterieCount(w http.ResponseWriter, r *http.Request) {
+	getCount(w, r, "coterie", "total_coteries")
 }
 
-func Stats(app *fiber.App) {
-	app.Get("/stats/posts/@all", TotalPostsCount)
-	app.Get("/stats/coterie/@all", TotalCoterieCount)
-	app.Get("/stats/partners/@all", TotalPartnersCount)
-	app.Get("/stats/users/@all", RegistergedUserNum)
+// Stats registers the statistics routes with the Chi router
+func Stats(r chi.Router) {
+	r.Get("/stats/posts/@all", TotalPostsCount)
+	r.Get("/stats/coterie/@all", TotalCoterieCount)
+	r.Get("/stats/partners/@all", TotalPartnersCount)
+	r.Get("/stats/users/@all", RegistergedUserNum)
 }

@@ -10,7 +10,6 @@ import (
 
 	"netsocial/types"
 
-	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -38,26 +37,25 @@ func generateUniqueID(collection *mongo.Collection) (string, error) {
 	}
 }
 
-func AddPost(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+func AddPost(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*mongo.Client)
+	if db == nil {
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 
 	postsCollection := db.Database("SocialFlux").Collection("posts")
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
 
-	title := c.Query("title")
-	content := c.Query("content")
-	userId := c.Query("userId")
-	image := c.Query("image")
-	coterieName := c.Query("coterie")
-	scheduledForStr := c.Query("scheduledFor")
-	optionsStr := c.Query("options")
-	expirationStr := c.Query("expiration")
+	title := r.URL.Query().Get("title")
+	content := r.URL.Query().Get("content")
+	userId := r.URL.Query().Get("userId")
+	image := r.URL.Query().Get("image")
+	coterieName := r.URL.Query().Get("coterie")
+	scheduledForStr := r.URL.Query().Get("scheduledFor")
+	optionsStr := r.URL.Query().Get("options")
+	expirationStr := r.URL.Query().Get("expiration")
 
 	// Split options by comma only if optionsStr is provided
 	var validOptions []string
@@ -73,49 +71,43 @@ func AddPost(c *fiber.Ctx) error {
 
 		// Validate that we have at least 2 and no more than 4 options if provided
 		if len(validOptions) < 2 || len(validOptions) > 4 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Please provide between 2 and 4 poll options",
-			})
+			http.Error(w, "Please provide between 2 and 4 poll options", http.StatusBadRequest)
+			return
 		}
 	}
 
 	// Remaining validation...
 	if title == "" || content == "" || userId == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Title, content, and user ID are required",
-		})
+		http.Error(w, "Title, content, and user ID are required", http.StatusBadRequest)
+		return
 	}
 
 	authorID, err := primitive.ObjectIDFromHex(userId)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID format",
-		})
+		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
+		return
 	}
 
 	// Check if the user is banned
 	var user types.User
-	err = usersCollection.FindOne(c.Context(), bson.M{"_id": authorID}).Decode(&user)
+	err = usersCollection.FindOne(r.Context(), bson.M{"_id": authorID}).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch user information",
-		})
+		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
+		return
 	}
 
 	if user.IsBanned {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"message": "You are banned from using NetSocial's services.",
-		})
+		http.Error(w, "You are banned from using NetSocial's services.", http.StatusForbidden)
+		return
 	}
 
 	// Validate coterie membership
 	if coterieName != "" {
 		var coterie types.Coterie
-		err = coteriesCollection.FindOne(c.Context(), bson.M{"name": coterieName}).Decode(&coterie)
+		err = coteriesCollection.FindOne(r.Context(), bson.M{"name": coterieName}).Decode(&coterie)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to fetch coterie information",
-			})
+			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
+			return
 		}
 
 		isMember := false
@@ -127,18 +119,16 @@ func AddPost(c *fiber.Ctx) error {
 		}
 
 		if !isMember {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error": "User is not a member of the coterie",
-			})
+			http.Error(w, "User is not a member of the coterie", http.StatusForbidden)
+			return
 		}
 	}
 
 	// Generate a unique post ID
 	postID, err := generateUniqueID(postsCollection)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to generate unique post ID",
-		})
+		http.Error(w, "Failed to generate unique post ID", http.StatusInternalServerError)
+		return
 	}
 
 	// Parse ScheduledFor time
@@ -146,9 +136,8 @@ func AddPost(c *fiber.Ctx) error {
 	if scheduledForStr != "" {
 		scheduledFor, err = time.Parse(time.RFC3339, scheduledForStr)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid format for scheduled time",
-			})
+			http.Error(w, "Invalid format for scheduled time", http.StatusBadRequest)
+			return
 		}
 	}
 
@@ -177,9 +166,8 @@ func AddPost(c *fiber.Ctx) error {
 		if expirationStr != "" {
 			expirationTime, err := time.Parse(time.RFC3339, expirationStr)
 			if err != nil {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"error": fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr),
-				})
+				http.Error(w, fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr), http.StatusBadRequest)
+				return
 			}
 			poll["expiration"] = expirationTime // Set the parsed expiration time
 		}
@@ -216,15 +204,12 @@ func AddPost(c *fiber.Ctx) error {
 		post["poll"] = []bson.M{poll}
 	}
 
-	_, err = postsCollection.InsertOne(c.Context(), post)
+	_, err = postsCollection.InsertOne(r.Context(), post)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to create post",
-		})
+		http.Error(w, "Failed to create post", http.StatusInternalServerError)
+		return
 	}
 
-	return c.Status(http.StatusCreated).JSON(fiber.Map{
-		"message": "Post successfully created!",
-		"postId":  postID,
-	})
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprint(w, `{"message": "Post successfully created!", "postId": "`+postID+`"}`)
 }

@@ -2,6 +2,8 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"netsocial/types"
 	"time"
 
@@ -13,34 +15,31 @@ import (
 )
 
 // PostActions handles actions on posts, including like, unlike, and voting.
-func PostActions(c *fiber.Ctx) error {
+func PostActions(w http.ResponseWriter, r *http.Request) {
 	// Get the postId, userId, action, and optionId from query parameters
-	postId := c.Query("postId")
-	userId := c.Query("userId")
-	action := c.Query("action")
-	optionId := c.Query("optionId")
+	postId := r.URL.Query().Get("postId")
+	userId := r.URL.Query().Get("userId")
+	action := r.URL.Query().Get("action")
+	optionId := r.URL.Query().Get("optionId")
 
 	// Validate action (supporting "like", "unlike", and "vote")
 	if action != "like" && action != "unlike" && action != "vote" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid action. Action must be 'like', 'unlike', or 'vote'.",
-		})
+		http.Error(w, `{"error": "Invalid action. Action must be 'like', 'unlike', or 'vote'."}`, http.StatusBadRequest)
+		return
 	}
 
 	// Parse userId to primitive.ObjectID
 	userID, err := primitive.ObjectIDFromHex(userId)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID",
-		})
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Access MongoDB client from context
-	db, ok := c.Locals("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Access MongoDB collection for users
@@ -50,14 +49,12 @@ func PostActions(c *fiber.Ctx) error {
 	var user types.User
 	err = usersCollection.FindOne(context.Background(), bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch user details",
-		})
+		http.Error(w, `{"error": "Failed to fetch user details"}`, http.StatusInternalServerError)
+		return
 	}
 	if user.IsBanned {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "You are banned from using NetSocial's services.",
-		})
+		http.Error(w, `{"error": "You are banned from using NetSocial's services."}`, http.StatusForbidden)
+		return
 	}
 
 	// Access MongoDB collection for posts
@@ -77,47 +74,42 @@ func PostActions(c *fiber.Ctx) error {
 		}
 		_, err = postsCollection.UpdateOne(context.Background(), filter, update)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to update post",
-			})
+			http.Error(w, `{"error": "Failed to update post"}`, http.StatusInternalServerError)
+			return
 		}
 		message := "Post liked successfully"
 		if action == "unlike" {
 			message = "Post unliked successfully"
 		}
-		return c.JSON(fiber.Map{"message": message})
+		json.NewEncoder(w).Encode(fiber.Map{"message": message})
 
 	case "vote":
 		// Ensure the optionId is provided
 		if optionId == "" {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Option ID is required for voting",
-			})
+			http.Error(w, `{"error": "Option ID is required for voting"}`, http.StatusBadRequest)
+			return
 		}
 
 		// Convert optionId to primitive.ObjectID
 		optionObjectID, err := primitive.ObjectIDFromHex(optionId)
 		if err != nil {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Invalid option ID",
-			})
+			http.Error(w, `{"error": "Invalid option ID"}`, http.StatusBadRequest)
+			return
 		}
 
 		// Fetch post and check poll expiration
 		var post types.Post
 		err = postsCollection.FindOne(context.Background(), filter).Decode(&post)
 		if err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Post not found",
-			})
+			http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
+			return
 		}
 
 		// Check if any poll in the post has expired
 		for _, poll := range post.Poll {
 			if poll.Expiration.Before(time.Now()) {
-				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-					"error": "Poll has expired; voting is not allowed",
-				})
+				http.Error(w, `{"error": "Poll has expired; voting is not allowed"}`, http.StatusForbidden)
+				return
 			}
 		}
 
@@ -142,23 +134,18 @@ func PostActions(c *fiber.Ctx) error {
 		// Execute the vote update with array filters
 		res, err := postsCollection.UpdateOne(context.Background(), pollFilter, voteUpdate, arrayFilters)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Failed to cast vote",
-			})
+			http.Error(w, `{"error": "Failed to cast vote"}`, http.StatusInternalServerError)
+			return
 		}
 		if res.ModifiedCount == 0 {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-				"error": "You have already voted or the poll is expired",
-			})
+			http.Error(w, `{"error": "You have already voted or the poll is expired"}`, http.StatusForbidden)
+			return
 		}
 
 		// Respond with success message
-		return c.JSON(fiber.Map{
-			"message": "Vote cast successfully",
-		})
+		json.NewEncoder(w).Encode(fiber.Map{"message": "Vote cast successfully"})
+		return
 	}
 
-	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-		"error": "Unknown error",
-	})
+	http.Error(w, `{"error": "Unknown error"}`, http.StatusInternalServerError)
 }

@@ -1,18 +1,22 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"log"
+	"net/http"
 	"os"
+	"time"
 
 	"netsocial/configuration"
 	"netsocial/database"
 	"netsocial/routes"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/cors"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
-	"github.com/gofiber/fiber/v2/middleware/session"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
+	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -34,29 +38,23 @@ func main() {
 		log.Println("DISCORD_WEBHOOK_URL environment variable not set")
 	}
 
-	// Create Fiber app instance
-	app := fiber.New(fiber.Config{
-		Prefork:        false,
-		CaseSensitive:  true,
-		StrictRouting:  true,
-		ReadBufferSize: 1000000,
-		ServerHeader:   "Net Social",
-		AppName:        "Connect, Share, Grow.",
-		ErrorHandler: func(c *fiber.Ctx, err error) error {
-			log.Println("Error:", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Internal Server Error",
-			})
-		},
-	})
+	// Create a new Chi router
+	r := chi.NewRouter()
 
-	// Middleware: CORS
-	app.Use(cors.New(cors.Config{
-		AllowOrigins:     "http://localhost:3000,https://netsocial.co.in,https://admin.netsocial.app,https://beta.netsocial.co.in,https://docs.netsocial.app,https://netsocial.app,https://net-social-website.vercel.app,https://beta.netsocial.app",
-		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS,HEAD",
-		AllowHeaders:     "Content-Type, Origin, X-Requested-With, Accept,x-client-key, x-client-token, x-client-secret, authorization",
+	// CORS Middleware using go-chi/cors
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 	}))
+
+	// Middleware: Recovery, Database Connection
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.CleanPath)
+	r.Use(middleware.AllowContentType("application/json"))
 
 	// Middleware: Database Connection
 	db, err := database.Connect(dbURL)
@@ -64,76 +62,86 @@ func main() {
 		log.Fatal("Failed to connect to database:", err)
 	}
 	defer db.Disconnect(nil)
-	app.Use(func(c *fiber.Ctx) error {
-		c.Locals("db", db)
-		return c.Next()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(context.WithValue(r.Context(), "db", db))
+			next.ServeHTTP(w, r)
+		})
 	})
 
-	// Middleware: Session
-	store := session.New()
-	app.Use(func(c *fiber.Ctx) error {
-		sess, _ := store.Get(c)
-		c.Locals("session", sess)
-		return c.Next()
-	})
-
-	// Routes
-	app.Get("/", func(c *fiber.Ctx) error {
-		return c.JSON(fiber.Map{
+	// Define routes without rate limiting first
+	// Home route
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"message": "Hello, World from Net Social!",
 			"version": configuration.GetConfig().ApiVersion,
 			"author":  "Ranveer Soni",
-			"links": fiber.Map{
+			"links": map[string]string{
 				"status": "https://status.netsocial.app",
 				"docs":   "https://docs.netsocial.app",
 			},
 		})
 	})
 
-	// Authentication
-	routes.Auth(app)
-
-	// Users
-	routes.User(app)
-
-	// Rate limit configuration
-	rateLimitConfig := limiter.Config{
-		Max:        5,             // Maximum number of requests
-		Expiration: 60 * 1000 * 5, // 5 minutes
-		LimitReached: func(c *fiber.Ctx) error {
-			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-				"error": "Woah! Slow down bucko! You're being rate limited!",
-			})
-		},
-	}
-
-	// Post routes with rate limiting
-	app.Get("/posts/@all", routes.GetAllPosts)
-	app.Get("/posts/:id", routes.GetPostById)
-	app.Post("/post/action", limiter.New(rateLimitConfig), routes.PostActions)
-	app.Post("/comment/add", limiter.New(rateLimitConfig), routes.AddComment)
-	app.Delete("/post/delete", limiter.New(rateLimitConfig), routes.DeletePost)
-	app.Post("/post/add", limiter.New(rateLimitConfig), routes.AddPost)
-	app.Get("/link/extract", routes.ExtractLinkPreview)
-
-	// Report
-	routes.Report(app)
+	// Post Routes
+	r.Get("/posts/@all", routes.GetAllPosts)
+	r.Get("/link/extract", routes.ExtractLinkPreview)
+	r.Get("/posts/{id}", routes.GetPostById)
+	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/comment/add", routes.AddComment)
+	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/post/action", routes.PostActions)
+	r.With(rateLimitMiddleware(5, 5*time.Minute)).Delete("/post/delete", routes.DeletePost)
+	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/post/add", routes.AddPost)
 
 	// Admin
-	routes.Admin(app)
+	routes.Admin(r)
 
-	//Havok Chat
-	routes.HavokRoutes(app)
+	// Havok Chat
+	routes.HavokRoutes(r)
+
+	// Report
+	routes.Report(r)
+
+	// Users
+	routes.User(r)
 
 	// Coterie
-	routes.CoterieRoutes(app)
+	routes.CoterieRoutes(r)
 
-	// Misc
-	routes.Stats(app)
-	app.Get("/blog/posts/@all", routes.GetPosts)
-	app.Get("/partners/@all", routes.GetAllPartner)
+	// Authentication
+	routes.Auth(r)
+
+	// Misc routes
+	routes.Stats(r)
+	r.Get("/blog/posts/@all", routes.GetPosts)
+	r.Get("/partners/@all", routes.GetAllPartner)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
-	log.Fatal(app.Listen(":" + port))
+	log.Fatal(http.ListenAndServe(":"+port, r))
+}
+
+// Rate Limit Middleware
+func rateLimitMiddleware(limit int, burst time.Duration) func(http.Handler) http.Handler {
+	// Create a rate limiter
+	limiter := rate.NewLimiter(rate.Every(burst/time.Duration(limit)), limit)
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if limiter.Allow() {
+				next.ServeHTTP(w, r)
+			} else {
+				// Rate limit exceeded, return a custom message
+				w.WriteHeader(http.StatusTooManyRequests) // Set status code to 429
+				w.Header().Set("Content-Type", "text/plain")
+				w.Write([]byte("Woah! Slow down bucko! You're being rate limited!"))
+			}
+		})
+	}
+}
+
+// Helper function to respond with JSON
+func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(payload)
 }

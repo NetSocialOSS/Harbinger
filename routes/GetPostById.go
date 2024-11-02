@@ -2,13 +2,16 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
 	"netsocial/types"
 
-	"github.com/gofiber/fiber/v2"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,16 +19,15 @@ import (
 )
 
 // Function to handle fetching a single post by ID
-func GetPostById(c *fiber.Ctx) error {
+func GetPostById(w http.ResponseWriter, r *http.Request) {
 	// Get the post ID from the URL parameter
-	postID := c.Params("id")
+	postID := chi.URLParam(r, "id")
 
-	// Access MongoDB client from Fiber context
-	db, ok := c.Locals("db").(*mongo.Client)
+	// Access MongoDB client from context
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 
 	// Access MongoDB collection for posts
@@ -45,24 +47,22 @@ func GetPostById(c *fiber.Ctx) error {
 
 	// Find the post by its ID
 	var post types.Post
+
 	if err := postsCollection.FindOne(context.Background(), bson.M{"_id": postID}, opts).Decode(&post); err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Post not found",
-			})
+			http.Error(w, "Post not found", http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Failed to fetch post: %v", err),
-		})
+		http.Error(w, fmt.Sprintf("Failed to fetch post: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	// Fetch author details from the users collection
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	var author types.Author
 	if err := usersCollection.FindOne(context.Background(), bson.M{"_id": post.Author}).Decode(&author); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("Failed to fetch author details: %v", err),
-		})
+		http.Error(w, fmt.Sprintf("Failed to fetch author details: %v", err), http.StatusInternalServerError)
+		return
 	}
 
 	// Fetch comments with limited author details
@@ -70,9 +70,8 @@ func GetPostById(c *fiber.Ctx) error {
 	for _, comment := range post.Comments {
 		var commentAuthor types.Author
 		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": comment.Author}).Decode(&commentAuthor); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": fmt.Sprintf("Failed to fetch author details for comment: %v", err),
-			})
+			http.Error(w, fmt.Sprintf("Failed to fetch author details for comment: %v", err), http.StatusInternalServerError)
+			return
 		}
 
 		// Construct each comment with author's details
@@ -164,7 +163,13 @@ func GetPostById(c *fiber.Ctx) error {
 		responseData["image"] = post.Image
 	}
 
-	return c.JSON(responseData)
+	// Respond with JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(responseData); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
+		return
+	}
 }
 
 // Function to calculate time ago

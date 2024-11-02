@@ -2,12 +2,13 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"time"
 
 	"netsocial/types"
 
-	"github.com/gofiber/fiber/v2"
 	"github.com/karlseguin/ccache/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -35,12 +36,11 @@ func purgeCachePeriodically() {
 	}
 }
 
-func GetAllPosts(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func GetAllPosts(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 
 	postsCollection := db.Database("SocialFlux").Collection("posts")
@@ -53,23 +53,27 @@ func GetAllPosts(c *fiber.Ctx) error {
 	cachedPosts := postCache.Get("all_posts")
 	if cachedPosts != nil {
 		// Return cached posts if they exist
-		return c.JSON(cachedPosts.Value())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(cachedPosts.Value())
+		return
 	}
 
 	// Sort posts by CreatedAt in descending order
 	findOptions := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
 	cursor, err := postsCollection.Find(ctx, bson.M{}, findOptions)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	defer cursor.Close(ctx)
 
 	var posts []types.Post
 	if err := cursor.All(ctx, &posts); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	var visiblePosts []fiber.Map // A slice to store formatted posts
+	var visiblePosts []map[string]interface{} // A slice to store formatted posts
 
 	now := time.Now() // Current time for comparison
 
@@ -150,7 +154,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 			}
 		}
 
-		postResponse := fiber.Map{
+		postResponse := map[string]interface{}{
 			"_id":           post.ID,
 			"title":         post.Title,
 			"content":       post.Content,
@@ -159,7 +163,7 @@ func GetAllPosts(c *fiber.Ctx) error {
 			"poll":          post.Poll,
 			"timeAgo":       calculateTimeAgo(post.CreatedAt),
 			"commentNumber": len(post.Comments),
-			"authorDetails": fiber.Map{
+			"authorDetails": map[string]interface{}{
 				"isVerified":     author.IsVerified,
 				"isOrganisation": author.IsOrganisation,
 				"isDeveloper":    author.IsDeveloper,
@@ -183,7 +187,8 @@ func GetAllPosts(c *fiber.Ctx) error {
 	postCache.Set("all_posts", visiblePosts, time.Minute*3)
 
 	// Return only visible posts (posts from non-private accounts)
-	return c.JSON(visiblePosts)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(visiblePosts)
 }
 
 func calculateTimeAgo(createdAt time.Time) string {

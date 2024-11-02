@@ -2,12 +2,13 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"log"
+	"net/http"
 	"time"
 
 	"netsocial/types"
 
-	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -15,33 +16,30 @@ import (
 )
 
 // AddComment adds a new comment to a post
-func AddComment(c *fiber.Ctx) error {
+func AddComment(w http.ResponseWriter, r *http.Request) {
 	// Get the MongoDB client from the context
-	db, ok := c.Locals("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Parse query parameters
-	postID := c.Query("id")
-	content := c.Query("content")
-	authorIDStr := c.Query("author")
+	postID := r.URL.Query().Get("id")
+	content := r.URL.Query().Get("content")
+	authorIDStr := r.URL.Query().Get("author")
 
 	// Validate the inputs
 	if postID == "" || content == "" || authorIDStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Missing required query parameters",
-		})
+		http.Error(w, `{"error": "Missing required query parameters"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Convert authorIDStr to ObjectID
 	authorObjectID, err := primitive.ObjectIDFromHex(authorIDStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid author ID",
-		})
+		http.Error(w, `{"error": "Invalid author ID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Create a new comment
@@ -61,21 +59,18 @@ func AddComment(c *fiber.Ctx) error {
 	err = usersCollection.FindOne(context.Background(), bson.M{"_id": authorObjectID}).Decode(&author)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"error": "Author not found",
-			})
+			http.Error(w, `{"error": "Author not found"}`, http.StatusBadRequest)
+			return
 		}
 		log.Printf("Error finding author: %v", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to verify author",
-		})
+		http.Error(w, `{"error": "Failed to verify author"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the author is banned
 	if author.IsBanned {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"message": "Hey there, you are banned from using NetSocial's services.",
-		})
+		http.Error(w, `{"message": "Hey there, you are banned from using NetSocial's services."}`, http.StatusForbidden)
+		return
 	}
 
 	// Update the post with the new comment
@@ -87,10 +82,11 @@ func AddComment(c *fiber.Ctx) error {
 	err = postsCollection.FindOneAndUpdate(context.Background(), filter, update, opts).Decode(&updatedPost)
 	if err != nil {
 		log.Printf("Error updating post: %v", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to add comment to post",
-		})
+		http.Error(w, `{"error": "Failed to add comment to post"}`, http.StatusInternalServerError)
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(updatedPost)
+	// Respond with the updated post
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(updatedPost)
 }
