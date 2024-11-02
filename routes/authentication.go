@@ -3,6 +3,7 @@ package routes
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -12,8 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
 	"github.com/gtuk/discordwebhook"
@@ -36,50 +36,58 @@ func generateJWT(userID primitive.ObjectID) (string, error) {
 	return token.SignedString([]byte(jwtSecret))
 }
 
-func authMiddleware(c *fiber.Ctx) error {
-	tokenStr := c.Cookies("token")
-	if tokenStr == "" {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "No token provided"})
-	}
-
-	// Parse JWT token
-	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fiber.NewError(fiber.StatusUnauthorized, "Invalid token")
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Attempt to retrieve the token from the cookie
+		tokenCookie, err := r.Cookie("token")
+		if err != nil || tokenCookie == nil {
+			http.Error(w, "Unauthorized: No token provided", http.StatusUnauthorized)
+			return
 		}
-		return []byte(jwtSecret), nil
-	})
-	if err != nil || !token.Valid {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token"})
+
+		// Parse the JWT token
+		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, errors.New("Unauthorized: Invalid token signing method")
+			}
+			return []byte(jwtSecret), nil
+		})
+		if err != nil || !token.Valid {
+			http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// Extract claims
+		claims, ok := token.Claims.(jwt.MapClaims)
+		if !ok {
+			http.Error(w, "Unauthorized: Invalid token claims", http.StatusUnauthorized)
+			return
+		}
+
+		// Convert userID from claims
+		userID, err := primitive.ObjectIDFromHex(claims["user_id"].(string))
+		if err != nil {
+			http.Error(w, "Unauthorized: Invalid user ID", http.StatusUnauthorized)
+			return
+		}
+
+		// Ensure the session exists
+		sessionCollection := r.Context().Value("db").(*mongo.Client).Database("SocialFlux").Collection("sessions")
+		var session types.Session
+		err = sessionCollection.FindOne(context.TODO(), bson.M{
+			"user_id": userID,
+			"token":   tokenCookie.Value,
+		}).Decode(&session)
+		if err != nil {
+			http.Error(w, "Unauthorized: Session not found", http.StatusUnauthorized)
+			return
+		}
+
+		// Pass user ID to the next handler
+		ctx := context.WithValue(r.Context(), "user_id", userID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
-
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || !token.Valid {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token claims"})
-	}
-
-	// Extract user ID and session ID from claims
-	userID, err := primitive.ObjectIDFromHex(claims["user_id"].(string))
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid token claims"})
-	}
-
-	sessionCollection := c.Locals("db").(*mongo.Client).Database("SocialFlux").Collection("sessions")
-	var session types.Session
-
-	// Ensure that the token exists in the session collection
-	err = sessionCollection.FindOne(context.TODO(), bson.M{
-		"user_id": userID,
-		"token":   tokenStr,
-	}).Decode(&session)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Session not found"})
-	}
-
-	c.Locals("user_id", userID)
-	return c.Next()
 }
-
 func FetchDisposableDomains() (map[string]bool, error) {
 	resp, err := http.Get("https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/master/disposable_email_blocklist.conf")
 	if err != nil {
@@ -114,39 +122,44 @@ func sendWelcomeEmail(email string) error {
 	return err
 }
 
-func UserSignup(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func UserSignup(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	username := c.Query("username")
-	email := c.Query("email")
-	password := c.Query("password")
+	username := r.URL.Query().Get("username")
+	email := r.URL.Query().Get("email")
+	password := r.URL.Query().Get("password")
 
 	if username == "" || email == "" || password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required fields"})
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
 	}
 
 	disposableDomains, err := FetchDisposableDomains()
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch disposable email domains"})
+		http.Error(w, "Failed to fetch disposable email domains", http.StatusInternalServerError)
+		return
 	}
 
 	emailParts := strings.Split(email, "@")
 	if len(emailParts) != 2 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid email format"})
+		http.Error(w, "Invalid email format", http.StatusBadRequest)
+		return
 	}
 
 	emailDomain := emailParts[1]
 	if _, exists := disposableDomains[emailDomain]; exists {
 		err = sendDiscordWebhookFailure(username, email)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send Discord webhook"})
+			http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
+			return
 		}
-
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Disposable email domains are not allowed"})
+		http.Error(w, "Disposable email domains are not allowed", http.StatusBadRequest)
+		return
 	}
 
 	count, err := userCollection.CountDocuments(context.TODO(), bson.M{
@@ -156,21 +169,25 @@ func UserSignup(c *fiber.Ctx) error {
 		},
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database error"})
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
 	}
 	if count > 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Username or email already exists"})
+		http.Error(w, "Username or email already exists", http.StatusBadRequest)
+		return
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
 	}
 
 	var lastUser types.User
 	err = userCollection.FindOne(context.TODO(), bson.M{}, options.FindOne().SetSort(bson.D{{Key: "userid", Value: -1}})).Decode(&lastUser)
 	if err != nil && err != mongo.ErrNoDocuments {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve last user"})
+		http.Error(w, "Failed to retrieve last user", http.StatusInternalServerError)
+		return
 	}
 
 	newUserID := lastUser.UserID + 1
@@ -193,29 +210,32 @@ func UserSignup(c *fiber.Ctx) error {
 
 	result, err := userCollection.InsertOne(context.TODO(), user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create user"})
+		http.Error(w, "Failed to create user", http.StatusInternalServerError)
+		return
 	}
 
 	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": result.InsertedID}, bson.M{
 		"$set": bson.M{"id": result.InsertedID},
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update user id"})
+		http.Error(w, "Failed to update user id", http.StatusInternalServerError)
+		return
 	}
 
 	err = sendWelcomeEmail(email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send email. Please check your email address and try again"})
+		http.Error(w, "Failed to send email. Please check your email address and try again", http.StatusInternalServerError)
+		return
 	}
 
 	err = sendDiscordWebhook(username)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to send Discord webhook"})
+		http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
+		return
 	}
 
-	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
-		"message": "User created successfully",
-	})
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintln(w, `{"message": "User created successfully"}`)
 }
 
 func sendDiscordWebhook(username string) error {
@@ -258,19 +278,23 @@ func sendDiscordWebhookFailure(username, email string) error {
 	return nil
 }
 
-func UserLogin(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func UserLogin(w http.ResponseWriter, r *http.Request) {
+	// Extract the MongoDB client from the context
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
+
 	userCollection := db.Database("SocialFlux").Collection("users")
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
-	usernameOrEmail := c.Query("usernameOrEmail")
-	password := c.Query("password")
+	usernameOrEmail := r.URL.Query().Get("usernameOrEmail")
+	password := r.URL.Query().Get("password")
 
 	if usernameOrEmail == "" || password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required fields"})
+		http.Error(w, `{"error": "Missing required fields"}`, http.StatusBadRequest)
+		return
 	}
 
 	var user types.User
@@ -281,44 +305,48 @@ func UserLogin(c *fiber.Ctx) error {
 		},
 	}).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+		http.Error(w, `{"error": "Invalid credentials"}`, http.StatusUnauthorized)
+		return
 	}
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
 	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+		http.Error(w, `{"error": "Invalid credentials"}`, http.StatusUnauthorized)
+		return
 	}
 
 	token, err := generateJWT(user.ID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to generate token"})
+		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Set the JWT token in a secure cookie
-	c.Cookie(&fiber.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    token,
-		HTTPOnly: true,
+		HttpOnly: true,
 		Secure:   true,
-		SameSite: "None",
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	// Generate a unique session ID
 	sessionID := uuid.New().String()
 
 	// Identify the device type
-	device := c.Get("User-Agent")
+	device := r.UserAgent()
 
 	// Get the expiration time from the token claims
 	claims, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fiber.NewError(fiber.StatusUnauthorized, "Invalid token")
+			return nil, jwt.NewValidationError("Invalid token", jwt.ValidationErrorSignatureInvalid)
 		}
 		return []byte(jwtSecret), nil
 	})
 
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to parse token"})
+		http.Error(w, `{"error": "Failed to parse token"}`, http.StatusInternalServerError)
+		return
 	}
 
 	expirationTime := time.Unix(int64(claims.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
@@ -333,18 +361,19 @@ func UserLogin(c *fiber.Ctx) error {
 		Token:     token,
 	}
 
-	c.Cookie(&fiber.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
 		Value:    session.SessionID,
-		HTTPOnly: true,
+		HttpOnly: true,
 		Secure:   true,
-		SameSite: "None",
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	// Insert the session into the database
 	_, err = sessionCollection.InsertOne(context.TODO(), session)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create session"})
+		http.Error(w, `{"error": "Failed to create session"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Send login info to Discord webhook with host information
@@ -353,7 +382,12 @@ func UserLogin(c *fiber.Ctx) error {
 		log.Printf("Error sending Discord webhook: %v", err)
 	}
 
-	return c.JSON(fiber.Map{"message": "Logged in successfully", "user_id": user.ID.Hex()})
+	response := map[string]interface{}{
+		"message": "Logged in successfully",
+		"user_id": user.ID.Hex(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
 
 func sendDiscordWebhookLogin(username string) error {
@@ -378,23 +412,26 @@ func sendDiscordWebhookLogin(username string) error {
 	return nil
 }
 
-func UserLogout(c *fiber.Ctx) error {
-	currentSessionID := c.Query("session_id")
-	userIDStr := c.Query("userID")
+func UserLogout(w http.ResponseWriter, r *http.Request) {
+	currentSessionID := r.URL.Query().Get("session_id")
+	userIDStr := r.URL.Query().Get("userID")
 
 	if currentSessionID == "" || userIDStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing session_id or userID"})
+		http.Error(w, jsonResponse("Missing session_id or userID"), http.StatusBadRequest)
+		return
 	}
 
 	// Convert userID from string to ObjectID
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid userID format"})
+		http.Error(w, jsonResponse("Invalid userID format"), http.StatusBadRequest)
+		return
 	}
 
-	db, ok := c.Locals("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+		http.Error(w, jsonResponse("Database connection not available"), http.StatusInternalServerError)
+		return
 	}
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
@@ -403,77 +440,142 @@ func UserLogout(c *fiber.Ctx) error {
 		"user_id":    userID,
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to revoke session"})
+		http.Error(w, jsonResponse("Failed to revoke session"), http.StatusInternalServerError)
+		return
 	}
 
 	// Check if a session was deleted
 	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Session not found"})
+		http.Error(w, jsonResponse("Session not found"), http.StatusNotFound)
+		return
 	}
 
 	// Invalidate the JWT token (log out the user)
-	c.Cookie(&fiber.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
 		Expires:  time.Now().Add(-time.Hour),
-		HTTPOnly: true,
+		HttpOnly: true,
 		Secure:   true,
-		SameSite: "None",
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	// Clear the session cookie
-	c.Cookie(&fiber.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
 		Value:    "",
 		Expires:  time.Now().Add(-time.Hour),
-		HTTPOnly: true,
+		HttpOnly: true,
 		Secure:   true,
-		SameSite: "None",
+		SameSite: http.SameSiteNoneMode,
 	})
 
-	return c.JSON(fiber.Map{"message": "Logged out successfully"})
+	// Respond with a success message
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
 }
 
-func CurrentUser(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func ChangePassword(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
 	}
 	userCollection := db.Database("SocialFlux").Collection("users")
-	sessionCollection := db.Database("SocialFlux").Collection("sessions")
-	userID, ok := c.Locals("user_id").(primitive.ObjectID)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid user ID"})
-	}
 
+	userID := r.Context().Value("user_id").(primitive.ObjectID)
 	var user types.User
 	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to find user"})
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
 	}
 
-	var sessions []fiber.Map
+	oldPassword := r.URL.Query().Get("old_password")
+	newPassword := r.URL.Query().Get("new_password")
+
+	if newPassword == "" {
+		http.Error(w, "New password is required", http.StatusBadRequest)
+		return
+	}
+
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword))
+	if err != nil {
+		http.Error(w, "Incorrect old password", http.StatusUnauthorized)
+		return
+	}
+
+	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash new password", http.StatusInternalServerError)
+		return
+	}
+
+	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": userID}, bson.M{"$set": bson.M{"password": string(hashedNewPassword)}})
+	if err != nil {
+		http.Error(w, "Failed to update password", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, `{"message": "Password changed successfully"}`)
+}
+
+func CurrentUser(w http.ResponseWriter, r *http.Request) {
+	// Retrieve MongoDB client from context
+	db, ok := r.Context().Value("db").(*mongo.Client)
+	if !ok {
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Retrieve user ID from context
+	userID, ok := r.Context().Value("user_id").(primitive.ObjectID)
+	if !ok {
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Set up collections
+	userCollection := db.Database("SocialFlux").Collection("users")
+	sessionCollection := db.Database("SocialFlux").Collection("sessions")
+
+	// Retrieve user information
+	var user types.User
+	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to find user"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Retrieve sessions for the user
+	var sessions []map[string]interface{}
 	cursor, err := sessionCollection.Find(context.TODO(), bson.M{"user_id": userID})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to retrieve sessions"})
+		http.Error(w, `{"error": "Failed to retrieve sessions"}`, http.StatusInternalServerError)
+		return
 	}
 	defer cursor.Close(context.TODO())
 
-	currentSessionID := c.Cookies("session_id")
+	// Retrieve the session ID from the cookie
+	currentSessionCookie, err := r.Cookie("session_id")
+	var currentSessionID string
+	if err == nil {
+		currentSessionID = currentSessionCookie.Value
+	}
 
 	for cursor.Next(context.TODO()) {
 		var session types.Session
 		if err := cursor.Decode(&session); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to decode session"})
+			http.Error(w, `{"error": "Failed to decode session"}`, http.StatusInternalServerError)
+			return
 		}
 
 		// Check if this session is the current session
-		currentSession := false
-		if session.SessionID == currentSessionID {
-			currentSession = true
-		}
+		currentSession := session.SessionID == currentSessionID
 
-		sessions = append(sessions, fiber.Map{
+		sessions = append(sessions, map[string]interface{}{
 			"session_id": session.SessionID,
 			"device":     session.Device,
 			"started_at": session.StartedAt,
@@ -483,11 +585,12 @@ func CurrentUser(c *fiber.Ctx) error {
 	}
 
 	if err := cursor.Err(); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Cursor error"})
+		http.Error(w, `{"error": "Cursor error"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Prepare response
-	return c.JSON(fiber.Map{
+	response := map[string]interface{}{
 		"_id":            user.ID,
 		"username":       user.Username,
 		"displayname":    user.DisplayName,
@@ -497,21 +600,30 @@ func CurrentUser(c *fiber.Ctx) error {
 		"profilePicture": user.ProfilePicture,
 		"isOrganisation": user.IsOrganisation,
 		"sessions":       sessions,
-	})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, `{"error": "Failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
 
-func LogOutSession(c *fiber.Ctx) error {
-	sessionID := c.Query("session_id")
-	userID := c.Query("user_id")
+func LogOutSession(w http.ResponseWriter, r *http.Request) {
+	// Parse query parameters
+	sessionID := r.URL.Query().Get("session_id")
+	userID := r.URL.Query().Get("user_id")
 
 	userObjectID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid user ID"})
+		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		return
 	}
 
-	db, ok := c.Locals("db").(*mongo.Client)
+	// Retrieve database client from context
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
@@ -521,94 +633,39 @@ func LogOutSession(c *fiber.Ctx) error {
 		"user_id":    userObjectID,
 	})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to revoke session"})
+		http.Error(w, `{"error": "Failed to revoke session"}`, http.StatusInternalServerError)
+		return
 	}
 
 	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Session not found"})
+		http.Error(w, `{"error": "Session not found"}`, http.StatusNotFound)
+		return
 	}
 
 	// Invalidate JWT token in cookie
-	c.Cookie(&fiber.Cookie{
+	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
-		Expires:  time.Now().Add(-time.Hour),
-		HTTPOnly: true,
-		Secure:   true,
-		SameSite: "None",
+		MaxAge:   -1,   // Expire the cookie immediately
+		Secure:   true, // Ensure the cookie is sent over HTTPS
+		SameSite: http.SameSiteNoneMode,
+		Path:     "/",
 	})
 
-	return c.JSON(fiber.Map{"message": "Session revoked and user logged out successfully"})
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintln(w, `{"message": "Session revoked and user logged out successfully"}`)
 }
 
-func ChangePassword(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
-	}
-	userCollection := db.Database("SocialFlux").Collection("users")
-
-	// Extract user ID from JWT claims (should be a primitive.ObjectID)
-	userID, ok := c.Locals("user_id").(primitive.ObjectID)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid user ID"})
-	}
-
-	// Get old password, new password, and confirmation from the query parameters
-	oldPassword := c.Query("old_password")
-	newPassword := c.Query("new_password")
-	confirmPassword := c.Query("confirm_password")
-
-	if oldPassword == "" || newPassword == "" || confirmPassword == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Missing required fields"})
-	}
-
-	// Check if the new password meets the minimum length requirement
-	if len(newPassword) < 8 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New password must be at least 8 characters long"})
-	}
-
-	if newPassword != confirmPassword {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "New password and confirmation do not match"})
-	}
-
-	// Find the user in the database using ObjectID
-	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
-	}
-
-	// Verify the old password
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword))
-	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Old password is incorrect"})
-	}
-
-	// Hash the new password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to hash password"})
-	}
-
-	// Update the password in the database
-	_, err = userCollection.UpdateOne(
-		context.TODO(),
-		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{"password": string(hashedPassword)}},
-	)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update password"})
-	}
-
-	return c.JSON(fiber.Map{"message": "Password updated successfully"})
+func jsonResponse(message string) string {
+	response, _ := json.Marshal(map[string]string{"error": message})
+	return string(response)
 }
 
-func Auth(app *fiber.App) {
-	app.Post("/auth/signup", limiter.New(rateLimitConfig), UserSignup)
-	app.Get("/auth/login", limiter.New(rateLimitConfig), UserLogin)
-	app.Post("/auth/change-password", limiter.New(rateLimitConfig), authMiddleware, ChangePassword)
-	app.Post("/auth/logout", UserLogout)
-	app.Delete("/auth/logout/session", authMiddleware, LogOutSession)
-	app.Get("/auth/@me", authMiddleware, CurrentUser)
+func Auth(router chi.Router) {
+	router.Post("/auth/signup", UserSignup)
+	router.Get("/auth/login", UserLogin)
+	router.Post("/auth/logout", authMiddleware(http.HandlerFunc(UserLogout)))
+	router.Post("/auth/change-password", authMiddleware(http.HandlerFunc(ChangePassword)))
+	router.Post("/auth/logout/session", authMiddleware(http.HandlerFunc(LogOutSession)))
+	router.Get("/auth/@me", authMiddleware(http.HandlerFunc(CurrentUser)))
 }

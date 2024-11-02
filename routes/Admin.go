@@ -2,34 +2,34 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"netsocial/types"
 
-	"github.com/gofiber/fiber/v2"
+	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func ManageBadge(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func ManageBadge(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
-	username := c.Query("username")
-	action := c.Query("action")
-	badge := c.Query("badge")
-	modID := c.Query("modid")
+	username := r.URL.Query().Get("username")
+	action := r.URL.Query().Get("action")
+	badge := r.URL.Query().Get("badge")
+	modID := r.URL.Query().Get("modid")
 
 	// Validate modID
 	modIDHex, err := primitive.ObjectIDFromHex(modID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid modID",
-		})
+		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Check if the mod is an owner
@@ -38,16 +38,14 @@ func ManageBadge(c *fiber.Ctx) error {
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Moderator not found",
-		})
+		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the user has permission
 	if !modUser.IsOwner && !modUser.IsModerator && !modUser.IsDeveloper {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Permission denied. Only owners, moderators, or developers can manage badges.",
-		})
+		http.Error(w, `{"error": "Permission denied. Only owners, moderators, or developers can manage badges."}`, http.StatusForbidden)
+		return
 	}
 
 	// Find the user by username
@@ -55,9 +53,8 @@ func ManageBadge(c *fiber.Ctx) error {
 	var user types.User
 	err = usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "User not found",
-		})
+		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+		return
 	}
 
 	// Update the user's badge based on action
@@ -68,20 +65,19 @@ func ManageBadge(c *fiber.Ctx) error {
 	case "remove":
 		update = handleBadgeUpdate(user, badge, false)
 	default:
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid action",
-		})
+		http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Apply the update to the user
 	_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to update user badges",
-		})
+		http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
+		return
 	}
 
-	return c.JSON(fiber.Map{
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Badge %s successfully %sed for user %s", badge, action, username),
 	})
 }
@@ -103,23 +99,21 @@ func handleBadgeUpdate(_ types.User, badge string, add bool) bson.M {
 	}
 }
 
-func DeletePostAdmin(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
-	postID := c.Query("postId")
-	modID := c.Query("modid")
+	postID := r.URL.Query().Get("postId")
+	modID := r.URL.Query().Get("modid")
 
 	// Validate modID
 	modIDHex, err := primitive.ObjectIDFromHex(modID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid modID",
-		})
+		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Check if the mod is an owner
@@ -128,16 +122,14 @@ func DeletePostAdmin(c *fiber.Ctx) error {
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Moderator not found",
-		})
+		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the user has permission
 	if !modUser.IsOwner && !modUser.IsModerator {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Permission denied. Only owners and moderators can delete posts.",
-		})
+		http.Error(w, `{"error": "Permission denied. Only owners and moderators can delete posts."}`, http.StatusForbidden)
+		return
 	}
 
 	// Delete the post from the database
@@ -145,38 +137,35 @@ func DeletePostAdmin(c *fiber.Ctx) error {
 	deleteFilter := bson.M{"_id": postID}
 	result, err := postsCollection.DeleteOne(context.Background(), deleteFilter)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete post",
-		})
+		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
+		return
 	}
 	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Post not found",
-		})
+		http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
+		return
 	}
 
-	return c.JSON(fiber.Map{
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Post with ID %s successfully deleted", postID),
 	})
 }
 
-func DeleteCoterieAdmin(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
-	coterieName := c.Query("name")
-	modID := c.Query("modid")
+	coterieName := r.URL.Query().Get("name")
+	modID := r.URL.Query().Get("modid")
 
 	// Validate modID
 	modIDHex, err := primitive.ObjectIDFromHex(modID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid modID",
-		})
+		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Check if the mod is an owner
@@ -185,57 +174,51 @@ func DeleteCoterieAdmin(c *fiber.Ctx) error {
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Moderator not found",
-		})
+		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the user has permission
 	if !modUser.IsOwner && !modUser.IsModerator {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Permission denied. Only owners and moderators can delete posts.",
-		})
+		http.Error(w, `{"error": "Permission denied. Only owners and moderators can delete coteries."}`, http.StatusForbidden)
+		return
 	}
 
-	// Delete the post from the database
-	postsCollection := db.Database("SocialFlux").Collection("coterie")
+	// Delete the coterie from the database
+	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
 	deleteFilter := bson.M{"name": coterieName}
-	result, err := postsCollection.DeleteOne(context.Background(), deleteFilter)
+	result, err := coteriesCollection.DeleteOne(context.Background(), deleteFilter)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete coterie",
-		})
+		http.Error(w, `{"error": "Failed to delete coterie"}`, http.StatusInternalServerError)
+		return
 	}
 	if result.DeletedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "Coterie not found",
-		})
+		http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+		return
 	}
 
-	return c.JSON(fiber.Map{
-		"message": fmt.Sprintf("Post with ID %s successfully deleted", coterieName),
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf("Coterie with name %s successfully deleted", coterieName),
 	})
 }
 
-// ManageUser handles banning and unbanning users
-func ManageUser(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func ManageUser(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
-	username := c.Query("username")
-	action := c.Query("action")
-	modID := c.Query("modid")
+	username := r.URL.Query().Get("username")
+	action := r.URL.Query().Get("action")
+	modID := r.URL.Query().Get("modid")
 
 	// Validate modID
 	modIDHex, err := primitive.ObjectIDFromHex(modID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid modID",
-		})
+		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Check if the mod is an owner
@@ -244,16 +227,14 @@ func ManageUser(c *fiber.Ctx) error {
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Moderator not found",
-		})
+		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the user has permission
 	if !modUser.IsOwner && !modUser.IsModerator {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Permission denied. Only owners and moderators can manage users.",
-		})
+		http.Error(w, `{"error": "Permission denied. Only owners and moderators can manage users."}`, http.StatusForbidden)
+		return
 	}
 
 	// Find the user by username
@@ -261,9 +242,8 @@ func ManageUser(c *fiber.Ctx) error {
 	var user types.User
 	err = usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "User not found",
-		})
+		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+		return
 	}
 
 	// Update the user's ban status based on action
@@ -274,27 +254,26 @@ func ManageUser(c *fiber.Ctx) error {
 	case "unban":
 		update = bson.M{"isBanned": false}
 	default:
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid action",
-		})
+		http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Apply the update to the user
 	_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to update user status",
-		})
+		http.Error(w, `{"error": "Failed to update user status"}`, http.StatusInternalServerError)
+		return
 	}
 
-	return c.JSON(fiber.Map{
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("User %s successfully %sed", username, action),
 	})
 }
 
-func Admin(app *fiber.App) {
-	app.Post("/admin/manage/badge", ManageBadge)
-	app.Post("/admin/manage/user", ManageUser)
-	app.Delete("/admin/manage/post", DeletePostAdmin)
-	app.Delete("/admin/manage/coterie", DeleteCoterieAdmin)
+func Admin(router chi.Router) {
+	router.Post("/admin/manage/badge", ManageBadge)
+	router.Post("/admin/manage/user", ManageUser)
+	router.Delete("/admin/manage/post", DeletePostAdmin)
+	router.Delete("/admin/manage/coterie", DeleteCoterieAdmin)
 }

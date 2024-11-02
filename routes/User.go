@@ -2,7 +2,9 @@ package routes
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"netsocial/types"
 	"os"
@@ -10,8 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/go-chi/chi/v5"
 	"github.com/resend/resend-go/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -19,14 +20,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-func deleteAccount(c *fiber.Ctx) error {
-	// Get the MongoDB client from Fiber's context
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
-	}
+func deleteAccount(w http.ResponseWriter, r *http.Request) {
+	// Get the MongoDB client from the request context
+	db := r.Context().Value("db").(*mongo.Client)
 
 	// Get the users, posts, and coteries collections
 	usersCollection := db.Database("SocialFlux").Collection("users")
@@ -34,83 +30,73 @@ func deleteAccount(c *fiber.Ctx) error {
 	coteriesCollection := db.Database("SocialFlux").Collection("coteries")
 
 	// Retrieve the userId from query parameters
-	userID := c.Query("userId")
+	userID := r.URL.Query().Get("userId")
 	if userID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "userId query parameter is required",
-		})
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
 	}
 
 	// Convert the userID to a primitive.ObjectID
 	objID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid userID provided",
-		})
+		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		return
 	}
 
 	// Set up a context with a timeout to avoid long-running operations
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	// Retrieve user details to send the goodbye email
 	var user types.User
 	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to retrieve user details",
-		})
+		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
+		return
 	}
 
 	// Send goodbye email
 	err = sendGoodbyeEmail(user.Email)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to send goodbye email",
-		})
+		http.Error(w, "Failed to send goodbye email", http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the user exists in the users collection
 	count, err := usersCollection.CountDocuments(ctx, bson.M{"_id": objID})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to check if user exists",
-		})
+		http.Error(w, "Failed to check if user exists", http.StatusInternalServerError)
+		return
 	}
 	if count == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "User not found",
-		})
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
 	}
 
 	// Delete the user from the users collection
 	_, err = usersCollection.DeleteOne(ctx, bson.M{"_id": objID})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete user",
-		})
+		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
+		return
 	}
 
 	// Delete all posts authored by the user
 	_, err = postsCollection.DeleteMany(ctx, bson.M{"author": objID})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete posts",
-		})
+		http.Error(w, "Failed to delete posts", http.StatusInternalServerError)
+		return
 	}
 
 	// Delete all coteries owned by the user
 	_, err = coteriesCollection.DeleteMany(ctx, bson.M{"owner": objID})
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to delete coteries",
-		})
+		http.Error(w, "Failed to delete coteries", http.StatusInternalServerError)
+		return
 	}
 
 	// Respond with a success message
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "User, their posts, and coteries deleted successfully",
-	})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "User, their posts, and coteries deleted successfully"})
 }
 
 func sendGoodbyeEmail(email string) error {
@@ -127,35 +113,36 @@ func sendGoodbyeEmail(email string) error {
 	return err
 }
 
-func GetUserByName(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
-	}
+func GetUserByName(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*mongo.Client)
 
-	username := c.Params("username")
+	username := chi.URLParam(r, "username")
 	if username == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Name parameter is required"})
+		http.Error(w, "Name parameter is required", http.StatusBadRequest)
+		return
 	}
 
 	var user types.User
 	userCollection := db.Database("SocialFlux").Collection("users")
-	result := userCollection.FindOne(context.Background(), bson.M{"username": username})
+	result := userCollection.FindOne(r.Context(), bson.M{"username": username})
 	if result.Err() != nil {
 		if result.Err() == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching user data"})
+		http.Error(w, "Error fetching user data", http.StatusInternalServerError)
+		return
 	}
 
 	err := result.Decode(&user)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding user data"})
+		http.Error(w, "Error decoding user data", http.StatusInternalServerError)
+		return
 	}
 
 	// If the user is private, do not show their posts, followers, or following
 	if user.IsPrivate {
-		return c.JSON(fiber.Map{
+		json.NewEncoder(w).Encode(map[string]interface{}{
 			"username":       user.Username,
 			"displayname":    user.DisplayName,
 			"isVerified":     user.IsVerified,
@@ -173,14 +160,16 @@ func GetUserByName(c *fiber.Ctx) error {
 			"links":          user.Links,
 			"message":        "This account is private",
 		})
+		return
 	}
 
 	// Fetch posts made by the user without comments, sorted by createdAt in descending order
 	var posts []map[string]interface{}
 	postCollection := db.Database("SocialFlux").Collection("posts")
-	cursor, err := postCollection.Find(context.TODO(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
+	cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch posts"})
+		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+		return
 	}
 
 	// Create a map to store user IDs and their corresponding usernames
@@ -192,7 +181,7 @@ func GetUserByName(c *fiber.Ctx) error {
 			return username, nil
 		}
 		var u types.User
-		err := userCollection.FindOne(context.Background(), bson.M{"_id": id}).Decode(&u)
+		err := userCollection.FindOne(r.Context(), bson.M{"_id": id}).Decode(&u)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				return "Unknown User", nil
@@ -203,18 +192,20 @@ func GetUserByName(c *fiber.Ctx) error {
 		return u.Username, nil
 	}
 
-	for cursor.Next(context.TODO()) {
+	for cursor.Next(r.Context()) {
 		var post types.Post
 		err := cursor.Decode(&post)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error decoding posts data"})
+			http.Error(w, "Error decoding posts data", http.StatusInternalServerError)
+			return
 		}
 
 		// Fetch author details
 		var author types.User
-		err = userCollection.FindOne(context.Background(), bson.M{"_id": post.Author}).Decode(&author)
+		err = userCollection.FindOne(r.Context(), bson.M{"_id": post.Author}).Decode(&author)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching author data"})
+			http.Error(w, "Error fetching author data", http.StatusInternalServerError)
+			return
 		}
 
 		// Replace user IDs in hearts with usernames
@@ -222,11 +213,13 @@ func GetUserByName(c *fiber.Ctx) error {
 		for _, heartIDHex := range post.Hearts {
 			heartID, err := primitive.ObjectIDFromHex(heartIDHex)
 			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid heart ID"})
+				http.Error(w, "Invalid heart ID", http.StatusInternalServerError)
+				return
 			}
 			username, err := getUsername(heartID)
 			if err != nil {
-				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching heart user data"})
+				http.Error(w, "Error fetching heart user data", http.StatusInternalServerError)
+				return
 			}
 			hearts = append(hearts, username)
 		}
@@ -296,11 +289,13 @@ func GetUserByName(c *fiber.Ctx) error {
 	for _, followerID := range user.Followers {
 		followerObjectID, err := primitive.ObjectIDFromHex(followerID)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid follower ID"})
+			http.Error(w, "Invalid follower ID", http.StatusInternalServerError)
+			return
 		}
 		username, err := getUsername(followerObjectID)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching follower user data"})
+			http.Error(w, "Error fetching follower user data", http.StatusInternalServerError)
+			return
 		}
 		followersUsernames = append(followersUsernames, username)
 	}
@@ -308,17 +303,19 @@ func GetUserByName(c *fiber.Ctx) error {
 	for _, followingID := range user.Following {
 		followingObjectID, err := primitive.ObjectIDFromHex(followingID)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid following ID"})
+			http.Error(w, "Invalid following ID", http.StatusInternalServerError)
+			return
 		}
 		username, err := getUsername(followingObjectID)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error fetching following user data"})
+			http.Error(w, "Error fetching following user data", http.StatusInternalServerError)
+			return
 		}
 		followingUsernames = append(followingUsernames, username)
 	}
 
 	// Return full user data if the account is not private
-	return c.JSON(fiber.Map{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"username":       user.Username,
 		"isVerified":     user.IsVerified,
 		"isOrganisation": user.IsOrganisation,
@@ -341,26 +338,19 @@ func GetUserByName(c *fiber.Ctx) error {
 	})
 }
 
-func UpdateProfileSettings(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
-	}
+func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*mongo.Client)
 
-	userID := c.Query("userId")
+	userID := r.URL.Query().Get("userId")
 	if userID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "userId query parameter is required",
-		})
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
 	}
 
 	objID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid userID provided",
-		})
+		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		return
 	}
 
 	// Retrieve update parameters
@@ -368,7 +358,7 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 
 	// Helper function to decode and add fields to updateFields
 	decodeAndAddField := func(param string, field string) {
-		if value := c.Query(param); value != "" {
+		if value := r.URL.Query().Get(param); value != "" {
 			decoded, err := url.QueryUnescape(value)
 			if err == nil {
 				updateFields[field] = decoded
@@ -382,7 +372,7 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	decodeAndAddField("profileBanner", "profileBanner")
 
 	// Handle links
-	if links := c.Query("links"); links != "" {
+	if links := r.URL.Query().Get("links"); links != "" {
 		decodedLinks, err := url.QueryUnescape(links)
 		if err == nil {
 			updateFields["links"] = strings.Split(decodedLinks, ",")
@@ -390,9 +380,10 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	}
 
 	// Handle IsOrganisation
-	if isOrgQueryParam := c.Query("isOrganisation"); isOrgQueryParam != "" {
+	if isOrgQueryParam := r.URL.Query().Get("isOrganisation"); isOrgQueryParam != "" {
 		if isOrg, err := strconv.ParseBool(isOrgQueryParam); err == nil {
 			updateFields["isOrganisation"] = isOrg
+
 		}
 	}
 
@@ -401,87 +392,88 @@ func UpdateProfileSettings(c *fiber.Ctx) error {
 	filter := bson.M{"_id": objID}
 	update := bson.M{"$set": updateFields}
 
-	result, err := usersCollection.UpdateOne(context.Background(), filter, update)
+	result, err := usersCollection.UpdateOne(r.Context(), filter, update)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to update user profile",
-		})
+		http.Error(w, "Failed to update user profile", http.StatusInternalServerError)
+		return
 	}
 
 	if result.ModifiedCount == 0 {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-			"error": "User not found or no changes made",
-		})
+		http.Error(w, "User not found or no changes made", http.StatusNotFound)
+		return
 	}
 
-	return c.JSON(fiber.Map{
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message": "Profile settings updated successfully!",
 		"updates": updateFields,
 	})
 }
 
-// Follow or Unfollow user
-func FollowOrUnfollowUser(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Database connection not available"})
-	}
+func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*mongo.Client)
 
-	username := c.Query("username")
-	followerID := c.Query("userId")
-	action := c.Query("action") // This could be either "follow" or "unfollow"
+	username := r.URL.Query().Get("username")
+	followerID := r.URL.Query().Get("userId")
+	action := r.URL.Query().Get("action") // This could be either "follow" or "unfollow"
 
 	userCollection := db.Database("SocialFlux").Collection("users")
 
 	// Find the user to be followed/unfollowed
 	var userToBeUpdated bson.M
-	err := userCollection.FindOne(context.TODO(), bson.M{"username": username}).Decode(&userToBeUpdated)
+	err := userCollection.FindOne(r.Context(), bson.M{"username": username}).Decode(&userToBeUpdated)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error finding user"})
+		http.Error(w, "Error finding user", http.StatusInternalServerError)
+		return
 	}
 
 	// Find the follower user
 	followerObjectID, err := primitive.ObjectIDFromHex(followerID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid follower ID"})
+		http.Error(w, "Invalid follower ID", http.StatusBadRequest)
+		return
 	}
 
 	var followerUser bson.M
-	err = userCollection.FindOne(context.TODO(), bson.M{"_id": followerObjectID}).Decode(&followerUser)
+	err = userCollection.FindOne(r.Context(), bson.M{"_id": followerObjectID}).Decode(&followerUser)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Follower not found"})
+			http.Error(w, "Follower not found", http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Error finding follower"})
+		http.Error(w, "Error finding follower", http.StatusInternalServerError)
+		return
 	}
 
 	// Check if the follower user is banned
 	if isBanned, ok := followerUser["isbanned"].(bool); ok && isBanned {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Hey there, you are banned from using NetSocial's services.",
-		})
+		http.Error(w, "Hey there, you are banned from using NetSocial's services.", http.StatusForbidden)
+		return
 	}
 
 	// Check if the followerID is the same as the userToBeUpdated ID
 	if userToBeUpdated["_id"] == followerUser["_id"] {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "My guy, you can't follow yourself! That's cheating!!"})
+		http.Error(w, "My guy, you can't follow yourself! That's cheating!!", http.StatusBadRequest)
+		return
 	}
 
 	// Initialize followers and following if they are nil
 	if userToBeUpdated["followers"] == nil {
-		_, err := userCollection.UpdateOne(context.TODO(), bson.M{"username": username}, bson.M{"$set": bson.M{"followers": bson.A{}}})
+		_, err := userCollection.UpdateOne(r.Context(), bson.M{"username": username}, bson.M{"$set": bson.M{"followers": bson.A{}}})
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to initialize followers list"})
+			http.Error(w, "Failed to initialize followers list", http.StatusInternalServerError)
+			return
 		}
 		userToBeUpdated["followers"] = bson.A{} // Update local variable to reflect change
 	}
 	if followerUser["following"] == nil {
-		_, err := userCollection.UpdateOne(context.TODO(), bson.M{"_id": followerObjectID}, bson.M{"$set": bson.M{"following": bson.A{}}})
+		_, err := userCollection.UpdateOne(r.Context(), bson.M{"_id": followerObjectID}, bson.M{"$set": bson.M{"following": bson.A{}}})
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to initialize following list"})
+			http.Error(w, "Failed to initialize following list", http.StatusInternalServerError)
+			return
 		}
 		followerUser["following"] = bson.A{} // Update local variable to reflect change
 	}
@@ -497,11 +489,13 @@ func FollowOrUnfollowUser(c *fiber.Ctx) error {
 	}
 
 	if action == "follow" && isAlreadyFollowing {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("My guy, you are already following %s", username)})
+		http.Error(w, fmt.Sprintf("My guy, you are already following %s", username), http.StatusBadRequest)
+		return
 	}
 
 	if action == "unfollow" && !isAlreadyFollowing {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": fmt.Sprintf("My guy, you aren't even following %s", username)})
+		http.Error(w, fmt.Sprintf("My guy, you aren't even following %s", username), http.StatusBadRequest)
+		return
 	}
 
 	// Determine the update operation based on the action
@@ -519,21 +513,24 @@ func FollowOrUnfollowUser(c *fiber.Ctx) error {
 		// Remove followed user's ID from the follower's following list
 		followerUserUpdate = bson.M{"$pull": bson.M{"following": userToBeUpdated["_id"].(primitive.ObjectID).Hex()}}
 	} else {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid action"})
+		http.Error(w, "Invalid action", http.StatusBadRequest)
+		return
 	}
 
 	// Update the user being followed/unfollowed
 	followedUserFilter := bson.M{"username": username}
-	_, err = userCollection.UpdateOne(context.TODO(), followedUserFilter, followedUserUpdate)
+	_, err = userCollection.UpdateOne(r.Context(), followedUserFilter, followedUserUpdate)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Error updating followers list for user %s: %v", username, err)})
+		http.Error(w, fmt.Sprintf("Error updating followers list for user %s: %v", username, err), http.StatusInternalServerError)
+		return
 	}
 
 	// Update the follower user
 	followerUserFilter := bson.M{"_id": followerObjectID}
-	_, err = userCollection.UpdateOne(context.TODO(), followerUserFilter, followerUserUpdate)
+	_, err = userCollection.UpdateOne(r.Context(), followerUserFilter, followerUserUpdate)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Error updating following list for user %s: %v", followerUser["username"], err)})
+		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", followerUser["username"], err), http.StatusInternalServerError)
+		return
 	}
 
 	// Format the success message
@@ -545,37 +542,30 @@ func FollowOrUnfollowUser(c *fiber.Ctx) error {
 	// Use fmt.Sprintf to format the success message correctly
 	successMessage := fmt.Sprintf("Successfully %s %s", actionMessage, username)
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": successMessage})
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": successMessage})
 }
 
-// TogglePrivacy allows a user to toggle the privacy of their profile (isPrivate field)
-func TogglePrivacy(c *fiber.Ctx) error {
-	// Get the MongoDB client from Fiber's context
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
-	}
+func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
+	// Get the MongoDB client from the request context
+	db := r.Context().Value("db").(*mongo.Client)
 
 	// Retrieve the userId from query parameters
-	userID := c.Query("userId")
+	userID := r.URL.Query().Get("userId")
 	if userID == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "userId query parameter is required",
-		})
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
 	}
 
 	// Convert the userID to a primitive.ObjectID
 	objID, err := primitive.ObjectIDFromHex(userID)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid userID provided",
-		})
+		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		return
 	}
 
 	// Set up a context with a timeout to avoid long-running operations
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
 	// Get the users collection
@@ -586,21 +576,18 @@ func TogglePrivacy(c *fiber.Ctx) error {
 	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "User not found",
-			})
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to retrieve user details",
-		})
+		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
+		return
 	}
 
 	// Toggle the isPrivate field
 	isPrivate, ok := user["isPrivate"].(bool)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error retrieving the isPrivate field",
-		})
+		http.Error(w, "Error retrieving the isPrivate field", http.StatusInternalServerError)
+		return
 	}
 	newPrivacyStatus := !isPrivate
 
@@ -610,22 +597,22 @@ func TogglePrivacy(c *fiber.Ctx) error {
 	}
 	_, err = usersCollection.UpdateOne(ctx, bson.M{"_id": objID}, update, options.Update().SetUpsert(false))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to update privacy settings",
-		})
+		http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
+		return
 	}
 
 	// Respond with the new privacy status
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
 		"message":      "Privacy setting updated successfully",
 		"isPrivateNow": newPrivacyStatus,
 	})
 }
 
-func User(app *fiber.App) {
-	app.Post("/user/account/delete", limiter.New(rateLimitConfig), deleteAccount)
-	app.Get("/user/:username", GetUserByName)
-	app.Post("/profile/settings", limiter.New(rateLimitConfig), UpdateProfileSettings)
-	app.Post("/user/FollowOrUnfollowUser", limiter.New(rateLimitConfig), FollowOrUnfollowUser)
-	app.Post("/user/settings/privacy", limiter.New(rateLimitConfig), TogglePrivacy)
+func User(r *chi.Mux) {
+	r.Post("/user/account/delete", deleteAccount)
+	r.Get("/user/{username}", GetUserByName)
+	r.Post("/profile/settings", UpdateProfileSettings)
+	r.Post("/user/FollowOrUnfollowUser", FollowOrUnfollowUser)
+	r.Post("/user/settings/privacy", TogglePrivacy)
 }

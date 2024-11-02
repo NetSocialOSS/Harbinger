@@ -1,28 +1,31 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
-	"netsocial/types"
 	"strings"
 
+	"netsocial/types"
+
 	"github.com/gocolly/colly/v2"
-	"github.com/gofiber/fiber/v2"
 )
 
 // ExtractLinkPreview handles the extraction of link previews
-func ExtractLinkPreview(c *fiber.Ctx) error {
-	urlParam := c.Query("url")
+func ExtractLinkPreview(w http.ResponseWriter, r *http.Request) {
+	urlParam := r.URL.Query().Get("url")
 
 	// Validate the URL parameter
 	if urlParam == "" {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "URL parameter is required"})
+		http.Error(w, `{"error": "URL parameter is required"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Parse the URL to ensure it's valid
 	parsedURL, err := url.Parse(urlParam)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid URL"})
+		http.Error(w, `{"error": "Invalid URL"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Create a new collector
@@ -69,11 +72,18 @@ func ExtractLinkPreview(c *fiber.Ctx) error {
 	// Visit the URL
 	err = crawler.Visit(urlParam)
 	if err != nil {
-		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch the URL"})
+		http.Error(w, `{"error": "Failed to fetch the URL"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Set the domain
 	linkPreview.Domain = parsedURL.Host
 
-	return c.JSON(linkPreview)
+	// Set the response header to application/json
+	w.Header().Set("Content-Type", "application/json")
+	// Encode linkPreview to JSON and write to the response
+	if err := json.NewEncoder(w).Encode(linkPreview); err != nil {
+		http.Error(w, `{"error": "Failed to encode response"}`, http.StatusInternalServerError)
+		return
+	}
 }

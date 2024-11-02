@@ -7,14 +7,15 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"netsocial/types"
 	"os"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -101,12 +102,11 @@ func decrypt(cipherText string) ([]byte, error) {
 }
 
 // PostMessage allows a user to post a message in a coterie.
-func PostMessage(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func PostMessage(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -114,22 +114,20 @@ func PostMessage(c *fiber.Ctx) error {
 	messageCollection := db.Database("SocialFlux").Collection("messages")
 
 	// Extract the coterieName, userID, and content from the query
-	coterieName := c.Query("coterieName")
-	userIDStr := c.Query("userID")
-	content := c.Query("content")
+	coterieName := r.URL.Query().Get("coterieName")
+	userIDStr := r.URL.Query().Get("userID")
+	content := r.URL.Query().Get("content")
 
 	if coterieName == "" || userIDStr == "" || content == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Missing required fields: coterieName, userID, and content are required",
-		})
+		http.Error(w, `{"error": "Missing required fields: coterieName, userID, and content are required"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Validate and convert user ID
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID format",
-		})
+		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -140,13 +138,11 @@ func PostMessage(c *fiber.Ctx) error {
 	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "User not found",
-			})
+			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error verifying user: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Error verifying user: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Find the coterie
@@ -154,20 +150,17 @@ func PostMessage(c *fiber.Ctx) error {
 	err = coterieCollection.FindOne(ctx, bson.M{"name": coterieName}).Decode(&coterie)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Coterie not found",
-			})
+			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error finding coterie: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if chat is allowed in the coterie
 	if !coterie.IsChatAllowed {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Chatting is disabled for this coterie.",
-		})
+		http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
+		return
 	}
 
 	// Check if the user is a member of the coterie
@@ -180,17 +173,15 @@ func PostMessage(c *fiber.Ctx) error {
 	}
 
 	if !isMember {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "You are not a member of this coterie",
-		})
+		http.Error(w, `{"error": "You are not a member of this coterie"}`, http.StatusForbidden)
+		return
 	}
 
 	// Encrypt the content
 	encryptedContent, err := encrypt([]byte(content))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to encrypt message: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Failed to encrypt message: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Create the message object
@@ -204,23 +195,20 @@ func PostMessage(c *fiber.Ctx) error {
 	// Insert the message into the messages collection
 	_, err = messageCollection.InsertOne(ctx, message)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to post message: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Failed to post message: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{
-		"message": "Message posted successfully",
-	})
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"message": "Message posted successfully"}`))
 }
 
 // FetchMessages retrieves messages for a specific coterie.
-func FetchMessages(c *fiber.Ctx) error {
-	db, ok := c.Locals("db").(*mongo.Client)
+func FetchMessages(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Database connection not available",
-		})
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+		return
 	}
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -228,21 +216,19 @@ func FetchMessages(c *fiber.Ctx) error {
 	messageCollection := db.Database("SocialFlux").Collection("messages")
 
 	// Extract the coterieName and userID
-	coterieName := c.Query("coterieName")
-	userIDStr := c.Query("userID")
+	coterieName := r.URL.Query().Get("coterieName")
+	userIDStr := r.URL.Query().Get("userID")
 
 	if coterieName == "" || userIDStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Missing required fields: coterieName and userID are required",
-		})
+		http.Error(w, `{"error": "Missing required fields: coterieName and userID are required"}`, http.StatusBadRequest)
+		return
 	}
 
 	// Validate and convert user ID
 	userID, err := primitive.ObjectIDFromHex(userIDStr)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "Invalid user ID format",
-		})
+		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
+		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -253,13 +239,11 @@ func FetchMessages(c *fiber.Ctx) error {
 	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "User not found",
-			})
+			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error verifying user: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Error verifying user: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Find the coterie
@@ -267,20 +251,17 @@ func FetchMessages(c *fiber.Ctx) error {
 	err = coterieCollection.FindOne(ctx, bson.M{"name": coterieName}).Decode(&coterie)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"error": "Coterie not found",
-			})
+			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+			return
 		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error finding coterie: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Check if chat is allowed in the coterie
 	if !coterie.IsChatAllowed {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "Chatting is disabled for this coterie.",
-		})
+		http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
+		return
 	}
 
 	// Check if the user is a member of the coterie
@@ -293,52 +274,47 @@ func FetchMessages(c *fiber.Ctx) error {
 	}
 
 	if !isMember {
-		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{
-			"error": "You are not a member of this coterie",
-		})
+		http.Error(w, `{"error": "You are not a member of this coterie"}`, http.StatusForbidden)
+		return
 	}
 
 	// Fetch the messages from the coterie, sorted by creation date (descending)
 	cursor, err := messageCollection.Find(ctx, bson.M{"coterie": coterieName}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Failed to fetch messages: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Failed to fetch messages: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 	defer cursor.Close(ctx)
 
 	var messages []types.Message
 	if err = cursor.All(ctx, &messages); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "Error decoding messages: " + err.Error(),
-		})
+		http.Error(w, `{"error": "Error decoding messages: `+err.Error()+`"}`, http.StatusInternalServerError)
+		return
 	}
 
 	// Modify the message format by removing userID and _id, adding author details
-	var formattedMessages []fiber.Map
+	var formattedMessages []map[string]interface{}
 	for _, message := range messages {
 		// Decrypt the content
 		decryptedContent, err := decrypt(message.Content)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Error decrypting message content: " + err.Error(),
-			})
+			http.Error(w, `{"error": "Error decrypting message content: `+err.Error()+`"}`, http.StatusInternalServerError)
+			return
 		}
 
 		// Get the user who posted the message
 		var messageUser types.User
 		err = userCollection.FindOne(ctx, bson.M{"_id": message.UserID}).Decode(&messageUser)
 		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-				"error": "Error fetching user data: " + err.Error(),
-			})
+			http.Error(w, `{"error": "Error fetching user data: `+err.Error()+`"}`, http.StatusInternalServerError)
+			return
 		}
 
 		// Format the message with author details
-		formattedMessages = append(formattedMessages, fiber.Map{
+		formattedMessages = append(formattedMessages, map[string]interface{}{
 			"content":   string(decryptedContent),
 			"createdAt": message.CreatedAt,
-			"author": fiber.Map{
+			"author": map[string]interface{}{
 				"username":       messageUser.Username,
 				"profilePicture": messageUser.ProfilePicture,
 				"profileBanner":  messageUser.ProfileBanner,
@@ -346,10 +322,14 @@ func FetchMessages(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(formattedMessages)
+	// Return the formatted messages as JSON
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(formattedMessages); err != nil {
+		http.Error(w, `{"error": "Failed to encode messages: `+err.Error()+`"}`, http.StatusInternalServerError)
+	}
 }
 
-func HavokRoutes(app *fiber.App) {
-	app.Post("/new/message", limiter.New(rateLimitConfig), PostMessage)
-	app.Get("/messages/@all", FetchMessages)
+func HavokRoutes(r *chi.Mux) {
+	r.Post("/new/message", PostMessage)
+	r.Get("/messages/@all", FetchMessages)
 }

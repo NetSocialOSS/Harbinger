@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 
-	"github.com/gofiber/fiber/v2"
-	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"github.com/go-chi/chi/v5"
 	"github.com/gtuk/discordwebhook"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -15,12 +15,7 @@ import (
 )
 
 // getReporterUsername fetches the reporter's username from the database
-func getReporterUsername(c *fiber.Ctx, reporterID string) (string, error) {
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return "", fmt.Errorf("database connection not available")
-	}
-
+func getReporterUsername(ctx context.Context, db *mongo.Client, reporterID string) (string, error) {
 	userCollection := db.Database("SocialFlux").Collection("users")
 
 	// Convert reporterID string to ObjectID
@@ -34,7 +29,7 @@ func getReporterUsername(c *fiber.Ctx, reporterID string) (string, error) {
 	var result struct {
 		Username string `bson:"username"`
 	}
-	err = userCollection.FindOne(context.Background(), filter).Decode(&result)
+	err = userCollection.FindOne(ctx, filter).Decode(&result)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return "", nil
@@ -46,19 +41,22 @@ func getReporterUsername(c *fiber.Ctx, reporterID string) (string, error) {
 }
 
 // ReportUser handles reporting a user
-func ReportUser(c *fiber.Ctx) error {
-	reportedUsername := c.Query("reportedUsername")
-	reporterID := c.Query("reporterID")
-	reason := c.Query("reason")
+func ReportUser(w http.ResponseWriter, r *http.Request) {
+	reportedUsername := r.URL.Query().Get("reportedUsername")
+	reporterID := r.URL.Query().Get("reporterID")
+	reason := r.URL.Query().Get("reason")
 
-	reporterUsername, err := getReporterUsername(c, reporterID)
+	db := r.Context().Value("db").(*mongo.Client)
+	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch reporter username"})
+		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
+		return
 	}
 
 	if reporterUsername == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reporter ID"})
+		http.Error(w, `{"error": "Invalid reporter ID"}`, http.StatusBadRequest)
+		return
 	}
 
 	webhookURL := os.Getenv("Report_URL")
@@ -94,31 +92,30 @@ func ReportUser(c *fiber.Ctx) error {
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
 		log.Println("Error sending message to Discord webhook:", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to report user")
+		http.Error(w, "Failed to report user", http.StatusInternalServerError)
+		return
 	}
 
-	return c.SendString("User reported successfully")
+	w.Write([]byte("User reported successfully"))
 }
 
 // ReportPost handles reporting a post
-func ReportPost(c *fiber.Ctx) error {
-	reportedPostID := c.Query("reportedPostID")
-	reporterID := c.Query("reporterID")
-	reason := c.Query("reason")
+func ReportPost(w http.ResponseWriter, r *http.Request) {
+	reportedPostID := r.URL.Query().Get("reportedPostID")
+	reporterID := r.URL.Query().Get("reporterID")
+	reason := r.URL.Query().Get("reason")
 
-	reporterUsername, err := getReporterUsername(c, reporterID)
+	db := r.Context().Value("db").(*mongo.Client)
+	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch reporter username"})
+		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
+		return
 	}
 
 	if reporterUsername == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reporter ID"})
-	}
-
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).SendString("Database connection not available")
+		http.Error(w, `{"error": "Invalid reporter ID"}`, http.StatusBadRequest)
+		return
 	}
 
 	postCollection := db.Database("SocialFlux").Collection("posts")
@@ -129,13 +126,15 @@ func ReportPost(c *fiber.Ctx) error {
 		ID string `bson:"_id,omitempty"`
 	}
 
-	err = postCollection.FindOne(context.Background(), filter).Decode(&existingPost)
+	err = postCollection.FindOne(r.Context(), filter).Decode(&existingPost)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reported post ID"})
+			http.Error(w, `{"error": "Invalid reported post ID"}`, http.StatusBadRequest)
+			return
 		}
 		log.Println("Error checking post existence:", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to check post existence")
+		http.Error(w, "Failed to check post existence", http.StatusInternalServerError)
+		return
 	}
 
 	webhookURL := os.Getenv("Report_URL")
@@ -171,31 +170,30 @@ func ReportPost(c *fiber.Ctx) error {
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
 		log.Println("Error sending message to Discord webhook:", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to report post")
+		http.Error(w, "Failed to report post", http.StatusInternalServerError)
+		return
 	}
 
-	return c.SendString("Post reported successfully")
+	w.Write([]byte("Post reported successfully"))
 }
 
 // ReportCoterie handles reporting a coterie
-func ReportCoterie(c *fiber.Ctx) error {
-	CoterieName := c.Query("Coterie")
-	reporterID := c.Query("reporterID")
-	reason := c.Query("reason")
+func ReportCoterie(w http.ResponseWriter, r *http.Request) {
+	CoterieName := r.URL.Query().Get("Coterie")
+	reporterID := r.URL.Query().Get("reporterID")
+	reason := r.URL.Query().Get("reason")
 
-	reporterUsername, err := getReporterUsername(c, reporterID)
+	db := r.Context().Value("db").(*mongo.Client)
+	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch reporter username"})
+		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
+		return
 	}
 
 	if reporterUsername == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reporter ID"})
-	}
-
-	db, ok := c.Locals("db").(*mongo.Client)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).SendString("Database connection not available")
+		http.Error(w, `{"error": "Invalid reporter ID"}`, http.StatusBadRequest)
+		return
 	}
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -207,13 +205,15 @@ func ReportCoterie(c *fiber.Ctx) error {
 		Name string `json:"name"`
 	}
 
-	err = coterieCollection.FindOne(context.Background(), filter).Decode(&Coterie)
+	err = coterieCollection.FindOne(r.Context(), filter).Decode(&Coterie)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid reported coterie name"})
+			http.Error(w, `{"error": "Invalid reported coterie name"}`, http.StatusBadRequest)
+			return
 		}
 		log.Println("Error checking coterie existence:", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to check coterie existence")
+		http.Error(w, "Failed to check coterie existence", http.StatusInternalServerError)
+		return
 	}
 
 	webhookURL := os.Getenv("Report_URL")
@@ -249,26 +249,15 @@ func ReportCoterie(c *fiber.Ctx) error {
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
 		log.Println("Error sending message to Discord webhook:", err)
-		return c.Status(fiber.StatusInternalServerError).SendString("Failed to report coterie")
+		http.Error(w, "Failed to report coterie", http.StatusInternalServerError)
+		return
 	}
 
-	return c.SendString("Coterie reported successfully")
+	w.Write([]byte("Coterie reported successfully"))
 }
 
-// Rate limit configuration
-
-var reportratelimit = limiter.Config{
-	Max:        5,             // Maximum number of requests
-	Expiration: 60 * 1000 * 5, // 5 minutes
-	LimitReached: func(c *fiber.Ctx) error {
-		return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
-			"error": "Woah! Slow down bucko! You're being rate limited!",
-		})
-	},
-}
-
-func Report(app *fiber.App) {
-	app.Post("/report/user", limiter.New(reportratelimit), ReportUser)
-	app.Post("/report/post", limiter.New(reportratelimit), ReportPost)
-	app.Post("/report/coterie", limiter.New(reportratelimit), ReportCoterie)
+func Report(r chi.Router) {
+	r.Post("/report/user", ReportUser)
+	r.Post("/report/post", ReportPost)
+	r.Post("/report/coterie", ReportCoterie)
 }
