@@ -93,8 +93,6 @@ func main() {
 	// Havok Chat
 	routes.HavokRoutes(r)
 
-	routes.RegisterRoutes(r)
-
 	// Report
 	routes.Report(r)
 
