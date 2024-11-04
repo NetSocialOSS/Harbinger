@@ -7,7 +7,6 @@ import (
 	"netsocial/types"
 	"time"
 
-	"github.com/gofiber/fiber/v2"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -81,7 +80,8 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		if action == "unlike" {
 			message = "Post unliked successfully"
 		}
-		json.NewEncoder(w).Encode(fiber.Map{"message": message})
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": message})
+		return
 
 	case "vote":
 		// Ensure the optionId is provided
@@ -143,9 +143,7 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Respond with success message
-		json.NewEncoder(w).Encode(fiber.Map{"message": "Vote cast successfully"})
+		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Vote cast successfully"})
 		return
 	}
-
-	http.Error(w, `{"error": "Unknown error"}`, http.StatusInternalServerError)
 }

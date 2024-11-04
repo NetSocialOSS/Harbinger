@@ -19,8 +19,8 @@ func DiscordErrorReport(next http.Handler) http.Handler {
 		// Call the next handler
 		next.ServeHTTP(rec, r)
 
-		// If there was an error (status code is 400 or higher (ignores 401 btw)), send a report to Discord
-		if rec.statusCode >= 400 && rec.statusCode != http.StatusUnauthorized {
+		// If there was an error (status code is 400 or higher (ignores 401, 403 btw)), send a report to Discord
+		if rec.statusCode >= 400 && rec.statusCode != http.StatusUnauthorized && rec.statusCode != http.StatusForbidden {
 			if err := sendErrorReportToDiscord(rec.statusCode, r); err != nil {
 				log.Printf("Failed to send error report to Discord: %v", err)
 			}
@@ -35,8 +35,9 @@ type statusRecorder struct {
 }
 
 func (rec *statusRecorder) WriteHeader(code int) {
-	rec.statusCode = code
-	rec.ResponseWriter.WriteHeader(code)
+	if rec.statusCode == http.StatusOK {
+		rec.statusCode = code
+	}
 }
 
 // sendErrorReportToDiscord sends a detailed error report to the configured Discord webhook
