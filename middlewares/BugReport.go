@@ -19,7 +19,7 @@ func DiscordErrorReport(next http.Handler) http.Handler {
 		// Call the next handler
 		next.ServeHTTP(rec, r)
 
-		// If there was an error (status code is 400 or higher (ignores 401, 403 btw)), send a report to Discord
+		// If there was an error (status code is 400 or higher, excluding 401 and 403), send a report to Discord
 		if rec.statusCode >= 400 && rec.statusCode != http.StatusUnauthorized && rec.statusCode != http.StatusForbidden {
 			if err := sendErrorReportToDiscord(rec.statusCode, r); err != nil {
 				log.Printf("Failed to send error report to Discord: %v", err)
@@ -35,9 +35,9 @@ type statusRecorder struct {
 }
 
 func (rec *statusRecorder) WriteHeader(code int) {
-	if rec.statusCode == http.StatusOK {
-		rec.statusCode = code
-	}
+	// Always record the status code, not just when it's 200
+	rec.statusCode = code
+	rec.ResponseWriter.WriteHeader(code)
 }
 
 // sendErrorReportToDiscord sends a detailed error report to the configured Discord webhook
@@ -94,7 +94,7 @@ func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
 // redactSensitiveParameters redacts sensitive query parameters from the URL
 func redactSensitiveParameters(u *url.URL) string {
 	query := u.Query()
-	sensitiveKeys := []string{"reporterID", "userId", "modid", "password"}
+	sensitiveKeys := []string{"reporterID", "userId", "user_id", "modid", "password"}
 
 	for _, key := range sensitiveKeys {
 		if query.Has(key) {
