@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"time"
 
 	"netsocial/configuration"
 	"netsocial/database"
@@ -16,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
-	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -87,16 +85,15 @@ func main() {
 	r.Get("/posts/@all", routes.GetAllPosts)
 	r.Get("/link/extract", routes.ExtractLinkPreview)
 	r.Get("/posts/{id}", routes.GetPostById)
-	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/comment/add", routes.AddComment)
-	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/post/action", routes.PostActions)
-	r.With(rateLimitMiddleware(5, 5*time.Minute)).Delete("/post/delete", routes.DeletePost)
-	r.With(rateLimitMiddleware(5, 5*time.Minute)).Post("/post/add", routes.AddPost)
+	routes.PostRoutes(r)
 
 	// Admin
 	routes.Admin(r)
 
 	// Havok Chat
 	routes.HavokRoutes(r)
+
+	routes.RegisterRoutes(r)
 
 	// Report
 	routes.Report(r)
@@ -114,29 +111,11 @@ func main() {
 	routes.Stats(r)
 	r.Get("/blog/posts/@all", routes.GetPosts)
 	r.Get("/partners/@all", routes.GetAllPartner)
+	r.NotFound(NotFoundHandler)
 
 	// Listen and serve
 	port := configuration.GetConfig().Web.Port
 	log.Fatal(http.ListenAndServe(":"+port, r))
-}
-
-// Rate Limit Middleware
-func rateLimitMiddleware(limit int, burst time.Duration) func(http.Handler) http.Handler {
-	// Create a rate limiter
-	limiter := rate.NewLimiter(rate.Every(burst/time.Duration(limit)), limit)
-
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if limiter.Allow() {
-				next.ServeHTTP(w, r)
-			} else {
-				// Rate limit exceeded, return a custom message
-				w.WriteHeader(http.StatusTooManyRequests) // Set status code to 429
-				w.Header().Set("Content-Type", "text/plain")
-				w.Write([]byte("Woah! Slow down bucko! You're being rate limited!"))
-			}
-		})
-	}
 }
 
 // Helper function to respond with JSON
@@ -144,4 +123,11 @@ func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(payload)
+}
+
+// Custom 404 Not Found handler
+func NotFoundHandler(w http.ResponseWriter, r *http.Request) {
+	respondJSON(w, http.StatusNotFound, map[string]string{
+		"message": "Woah, Chief! Looks like you are in an uncharted territory!",
+	})
 }

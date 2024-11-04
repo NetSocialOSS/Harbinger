@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
+	"netsocial/middlewares"
 	"netsocial/types"
 )
 
@@ -1179,15 +1180,15 @@ func contains(slice []string, item string) bool {
 
 func CoterieRoutes(r chi.Router) {
 	r.Get("/coterie/@all", GetAllCoterie)
-	r.Post("/coterie/leave", LeaveCoterie)
-	r.Post("/coterie/set-warning-limit", SetWarningLimit)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/leave", (middlewares.DiscordErrorReport(http.HandlerFunc(LeaveCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/set-warning-limit", (middlewares.DiscordErrorReport(http.HandlerFunc(SetWarningLimit)).ServeHTTP))
 	r.Get("/coterie/{name}", GetCoterieByName)
 	r.Get("/user/{userParam}/coteries", GetCoteriesByUserID)
-	r.Delete("/coterie/remove-post", RemovePostFromCoterie)
-	r.Post("/coterie/update", UpdateCoterie)
-	r.Post("/coterie/join", JoinCoterie)
-	r.Post("/coterie/promote", PromoteMember)
-	r.Post("/coterie/ban", BanUser)
-	r.Post("/coterie/warn", WarnMember)
-	r.Post("/coterie/new", AddNewCoterie)
+	r.With(RateLimit(5, 5*time.Minute)).Delete("/coterie/remove-post", (middlewares.DiscordErrorReport(http.HandlerFunc(RemovePostFromCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/update", (middlewares.DiscordErrorReport(http.HandlerFunc(UpdateCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/join", (middlewares.DiscordErrorReport(http.HandlerFunc(JoinCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/promote", (middlewares.DiscordErrorReport(http.HandlerFunc(PromoteMember)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/ban", (middlewares.DiscordErrorReport(http.HandlerFunc(BanUser)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/warn", (middlewares.DiscordErrorReport(http.HandlerFunc(WarnMember)).ServeHTTP))
+	r.With(RateLimit(1, 20*time.Minute)).Post("/coterie/new", (middlewares.DiscordErrorReport(http.HandlerFunc(AddNewCoterie)).ServeHTTP))
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"netsocial/middlewares"
 	"netsocial/types"
 	"os"
 	"strings"
@@ -41,33 +42,33 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Attempt to retrieve the token from the cookie
 		tokenCookie, err := r.Cookie("token")
 		if err != nil || tokenCookie == nil {
-			http.Error(w, "Unauthorized: No token provided", http.StatusUnauthorized)
+			http.Error(w, "Hey! You need to provide your token in the authorization header. This endpoint is for authenticated users only!", http.StatusUnauthorized)
 			return
 		}
 
 		// Parse the JWT token
 		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("Unauthorized: Invalid token signing method")
+				return nil, errors.New("Woah! what we have got there? Hmm, looks like a invalid token signing method chief!")
 			}
 			return []byte(jwtSecret), nil
 		})
 		if err != nil || !token.Valid {
-			http.Error(w, "Unauthorized: Invalid token", http.StatusUnauthorized)
+			http.Error(w, "Looks like you provided a invalid token chief!", http.StatusUnauthorized)
 			return
 		}
 
 		// Extract claims
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			http.Error(w, "Unauthorized: Invalid token claims", http.StatusUnauthorized)
+			http.Error(w, "Woah! seems like the provided token is not in our claims!", http.StatusUnauthorized)
 			return
 		}
 
 		// Convert userID from claims
 		userID, err := primitive.ObjectIDFromHex(claims["user_id"].(string))
 		if err != nil {
-			http.Error(w, "Unauthorized: Invalid user ID", http.StatusUnauthorized)
+			http.Error(w, "Looks like there is an issue! Consider reporting it!", http.StatusUnauthorized)
 			return
 		}
 
@@ -79,7 +80,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			"token":   tokenCookie.Value,
 		}).Decode(&session)
 		if err != nil {
-			http.Error(w, "Unauthorized: Session not found", http.StatusUnauthorized)
+			http.Error(w, "Looks like this Session is expired chief!", http.StatusUnauthorized)
 			return
 		}
 
@@ -662,10 +663,10 @@ func jsonResponse(message string) string {
 }
 
 func Auth(router chi.Router) {
-	router.Post("/auth/signup", UserSignup)
-	router.Get("/auth/login", UserLogin)
-	router.Post("/auth/logout", authMiddleware(http.HandlerFunc(UserLogout)))
-	router.Post("/auth/change-password", authMiddleware(http.HandlerFunc(ChangePassword)))
-	router.Post("/auth/logout/session", authMiddleware(http.HandlerFunc(LogOutSession)))
-	router.Get("/auth/@me", authMiddleware(http.HandlerFunc(CurrentUser)))
+	router.Post("/auth/signup", (middlewares.DiscordErrorReport(http.HandlerFunc(UserSignup)).ServeHTTP))
+	router.Get("/auth/login", (middlewares.DiscordErrorReport(http.HandlerFunc(UserLogin)).ServeHTTP))
+	router.Post("/auth/logout", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(UserLogout))).ServeHTTP))
+	router.Post("/auth/change-password", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(ChangePassword))).ServeHTTP))
+	router.Delete("/auth/logout/session", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(LogOutSession))).ServeHTTP))
+	router.Get("/auth/@me", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(CurrentUser))).ServeHTTP))
 }

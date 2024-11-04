@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"netsocial/middlewares"
 	"os"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gtuk/discordwebhook"
@@ -257,7 +259,7 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 }
 
 func Report(r chi.Router) {
-	r.Post("/report/user", ReportUser)
-	r.Post("/report/post", ReportPost)
-	r.Post("/report/coterie", ReportCoterie)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/user", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportUser))).ServeHTTP)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/post", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportPost))).ServeHTTP)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/coterie", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportCoterie)).ServeHTTP))
 }

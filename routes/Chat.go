@@ -11,6 +11,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"netsocial/middlewares"
 	"netsocial/types"
 	"os"
 	"time"
@@ -330,6 +331,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func HavokRoutes(r *chi.Mux) {
-	r.Post("/new/message", PostMessage)
-	r.Get("/messages/@all", FetchMessages)
+	r.Post("/new/message", (middlewares.DiscordErrorReport(http.HandlerFunc(PostMessage)).ServeHTTP))
+	r.Get("/messages/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(FetchMessages)).ServeHTTP))
 }
