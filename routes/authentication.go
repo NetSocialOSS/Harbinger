@@ -49,12 +49,12 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// Parse the JWT token
 		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("Woah! what we have got there? Hmm, looks like a invalid token signing method chief!")
+				return nil, errors.New("Woah! what we have got there? Hmm, looks like an invalid token signing method chief!")
 			}
 			return []byte(jwtSecret), nil
 		})
 		if err != nil || !token.Valid {
-			http.Error(w, "Looks like you provided a invalid token chief!", http.StatusUnauthorized)
+			http.Error(w, "Looks like you provided an invalid token chief!", http.StatusUnauthorized)
 			return
 		}
 
@@ -89,6 +89,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
+
 func FetchDisposableDomains() (map[string]bool, error) {
 	resp, err := http.Get("https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/master/disposable_email_blocklist.conf")
 	if err != nil {
