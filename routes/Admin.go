@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"netsocial/middlewares"
 	"netsocial/types"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
@@ -271,9 +273,9 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func Admin(router chi.Router) {
-	router.Post("/admin/manage/badge", ManageBadge)
-	router.Post("/admin/manage/user", ManageUser)
-	router.Delete("/admin/manage/post", DeletePostAdmin)
-	router.Delete("/admin/manage/coterie", DeleteCoterieAdmin)
+func Admin(r chi.Router) {
+	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/badge", (middlewares.DiscordErrorReport(http.HandlerFunc(ManageBadge)).ServeHTTP))
+	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/user", (middlewares.DiscordErrorReport(http.HandlerFunc(ManageUser)).ServeHTTP))
+	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/post", (middlewares.DiscordErrorReport(http.HandlerFunc(DeletePostAdmin)).ServeHTTP))
+	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/coterie", (middlewares.DiscordErrorReport(http.HandlerFunc(DeleteCoterieAdmin)).ServeHTTP))
 }

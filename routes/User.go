@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"netsocial/middlewares"
 	"netsocial/types"
 	"os"
 	"strconv"
@@ -610,9 +611,9 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 }
 
 func User(r *chi.Mux) {
-	r.Post("/user/account/delete", deleteAccount)
-	r.Get("/user/{username}", GetUserByName)
-	r.Post("/profile/settings", UpdateProfileSettings)
-	r.Post("/user/FollowOrUnfollowUser", FollowOrUnfollowUser)
-	r.Post("/user/settings/privacy", TogglePrivacy)
+	r.Post("/user/account/delete", (middlewares.DiscordErrorReport(http.HandlerFunc(deleteAccount)).ServeHTTP))
+	r.Get("/user/{username}", (middlewares.DiscordErrorReport(http.HandlerFunc(GetUserByName)).ServeHTTP))
+	r.Post("/profile/settings", (middlewares.DiscordErrorReport(http.HandlerFunc(UpdateProfileSettings)).ServeHTTP))
+	r.Post("/user/FollowOrUnfollowUser", (middlewares.DiscordErrorReport(http.HandlerFunc(FollowOrUnfollowUser)).ServeHTTP))
+	r.Post("/user/settings/privacy", (middlewares.DiscordErrorReport(http.HandlerFunc(TogglePrivacy)).ServeHTTP))
 }

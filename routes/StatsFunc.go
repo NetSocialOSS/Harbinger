@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"netsocial/middlewares"
 
 	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
@@ -40,7 +41,7 @@ func RegistergedUserNum(w http.ResponseWriter, r *http.Request) {
 
 // TotalPartnersCount retrieves the count of partners
 func TotalPartnersCount(w http.ResponseWriter, r *http.Request) {
-	getCount(w, r, "partners", "total_partner")
+	getCount(w, r, "partners", "total_partners")
 }
 
 // TotalPostsCount retrieves the count of posts
@@ -55,8 +56,8 @@ func TotalCoterieCount(w http.ResponseWriter, r *http.Request) {
 
 // Stats registers the statistics routes with the Chi router
 func Stats(r chi.Router) {
-	r.Get("/stats/posts/@all", TotalPostsCount)
-	r.Get("/stats/coterie/@all", TotalCoterieCount)
-	r.Get("/stats/partners/@all", TotalPartnersCount)
-	r.Get("/stats/users/@all", RegistergedUserNum)
+	r.Get("/stats/posts/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalPostsCount)).ServeHTTP))
+	r.Get("/stats/coterie/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalCoterieCount)).ServeHTTP))
+	r.Get("/stats/partners/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalPartnersCount)).ServeHTTP))
+	r.Get("/stats/users/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(RegistergedUserNum)).ServeHTTP))
 }
