@@ -116,6 +116,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	coterieName := chi.URLParam(r, "name")
+	action := r.URL.Query().Get("action")
 
 	var coterie types.Coterie
 	err := coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": coterieName, "$options": "i"}}).Decode(&coterie)
@@ -130,12 +131,14 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 
 	userIDToDetails := make(map[primitive.ObjectID]map[string]string)
 
+	// Get owner details
 	ownerDetails, err := getUserDetails(userCollection, coterie.Owner, userIDToDetails)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Get members' details
 	var memberDetails []map[string]interface{}
 	for _, memberID := range coterie.Members {
 		memberObjectID, err := primitive.ObjectIDFromHex(memberID)
@@ -157,126 +160,138 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		memberDetails = append(memberDetails, details)
 	}
 
-	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	defer postCursor.Close(ctx)
-
-	var posts []map[string]interface{}
-	for postCursor.Next(ctx) {
-		var post types.Post
-		if err := postCursor.Decode(&post); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		var author types.User
-		err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		var heartsDetails []map[string]interface{}
-		for _, heartID := range post.Hearts {
-			heartObjectID, err := primitive.ObjectIDFromHex(heartID)
-			if err != nil {
-				heartsDetails = append(heartsDetails, map[string]interface{}{
-					"username": "Invalid ID",
-				})
-				continue
-			}
-			details, err := getUserDetails(userCollection, heartObjectID, userIDToDetails)
-			if err != nil {
-				heartsDetails = append(heartsDetails, map[string]interface{}{
-					"username": "Unknown User",
-				})
-				continue
-			}
-			heartsDetails = append(heartsDetails, details)
-		}
-
-		if post.Poll != nil {
-			totalVotes := 0
-			for i := range post.Poll {
-				for j := range post.Poll[i].Options {
-					optionVoteCount := len(post.Poll[i].Options[j].Votes)
-					totalVotes += optionVoteCount
-
-					post.Poll[i].Options[j].Votes = nil
-					post.Poll[i].Options[j].VoteCount = optionVoteCount
-				}
-			}
-			if len(post.Poll) > 0 {
-				post.Poll[0].TotalVotes = totalVotes
-			}
-		}
-
-		now := time.Now()
-
-		if !post.ScheduledFor.IsZero() {
-			if post.ScheduledFor.After(now) {
-				continue
-			}
-		}
-
-		postMap := map[string]interface{}{
-			"_id":           post.ID,
-			"title":         post.Title,
-			"content":       post.Content,
-			"image":         post.Image,
-			"hearts":        heartsDetails,
-			"poll":          post.Poll,
-			"timeAgo":       calculateTimeAgo(post.CreatedAt),
-			"commentNumber": len(post.Comments),
-			"authorDetails": map[string]interface{}{
-				"isVerified":     author.IsVerified,
-				"isOrganisation": author.IsOrganisation,
-				"isDeveloper":    author.IsDeveloper,
-				"profileBanner":  author.ProfileBanner,
-				"profilePicture": author.ProfilePicture,
-				"isPartner":      author.IsPartner,
-				"isOwner":        author.IsOwner,
-				"isModerator":    author.IsModerator,
-				"username":       author.Username},
-		}
-		if !post.ScheduledFor.IsZero() {
-			postMap["scheduledFor"] = post.ScheduledFor
-		}
-		posts = append(posts, postMap)
-	}
-
-	coterie.OwnerUsername = ownerDetails["username"].(string)
-	coterie.MemberDetails = memberDetails
-	coterie.TotalPosts = int(postCount)
-
+	// Prepare the basic response structure based on action
 	result := map[string]interface{}{
 		"name":           coterie.Name,
 		"description":    coterie.Description,
-		"members":        memberDetails,
 		"owner":          ownerDetails,
 		"isVerified":     coterie.IsVerified,
 		"isOrganisation": coterie.IsOrganisation,
-		"TotalPosts":     len(posts),
 		"createdAt":      coterie.CreatedAt,
 		"TotalMembers":   len(memberDetails),
-		"Post":           posts,
 	}
 
 	if coterie.Avatar != "" {
 		result["avatar"] = coterie.Avatar
 	}
-
 	if coterie.Banner != "" {
 		result["banner"] = coterie.Banner
+	}
+
+	// Handle `members` action - return only member information
+	if action == "members" {
+		membersResponse := map[string]interface{}{
+			"members": memberDetails,
+		}
+		json.NewEncoder(w).Encode(membersResponse)
+		return
+	}
+
+	// If action is `info`, exclude the posts
+	if action == "info" {
+		json.NewEncoder(w).Encode(result)
+		return
+	}
+
+	// Handle post count and post details for `all` or unspecified action
+	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	result["TotalPosts"] = postCount
+
+	// Fetch posts if no action is specified or action is "all"
+	var posts []map[string]interface{}
+	if action == "" || action == "all" {
+		postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer postCursor.Close(ctx)
+
+		for postCursor.Next(ctx) {
+			var post types.Post
+			if err := postCursor.Decode(&post); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			var author types.User
+			err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			var heartsDetails []map[string]interface{}
+			for _, heartID := range post.Hearts {
+				heartObjectID, err := primitive.ObjectIDFromHex(heartID)
+				if err != nil {
+					heartsDetails = append(heartsDetails, map[string]interface{}{
+						"username": "Invalid ID",
+					})
+					continue
+				}
+				details, err := getUserDetails(userCollection, heartObjectID, userIDToDetails)
+				if err != nil {
+					heartsDetails = append(heartsDetails, map[string]interface{}{
+						"username": "Unknown User",
+					})
+					continue
+				}
+				heartsDetails = append(heartsDetails, details)
+			}
+
+			// Process polls and scheduled posts
+			if post.Poll != nil {
+				totalVotes := 0
+				for i := range post.Poll {
+					for j := range post.Poll[i].Options {
+						optionVoteCount := len(post.Poll[i].Options[j].Votes)
+						totalVotes += optionVoteCount
+						post.Poll[i].Options[j].Votes = nil
+						post.Poll[i].Options[j].VoteCount = optionVoteCount
+					}
+				}
+				if len(post.Poll) > 0 {
+					post.Poll[0].TotalVotes = totalVotes
+				}
+			}
+
+			now := time.Now()
+			if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
+				continue
+			}
+
+			postMap := map[string]interface{}{
+				"_id":           post.ID,
+				"title":         post.Title,
+				"content":       post.Content,
+				"image":         post.Image,
+				"hearts":        heartsDetails,
+				"poll":          post.Poll,
+				"timeAgo":       calculateTimeAgo(post.CreatedAt),
+				"commentNumber": len(post.Comments),
+				"authorDetails": map[string]interface{}{
+					"isVerified":     author.IsVerified,
+					"isOrganisation": author.IsOrganisation,
+					"isDeveloper":    author.IsDeveloper,
+					"profileBanner":  author.ProfileBanner,
+					"profilePicture": author.ProfilePicture,
+					"isPartner":      author.IsPartner,
+					"isOwner":        author.IsOwner,
+					"isModerator":    author.IsModerator,
+					"username":       author.Username,
+				},
+			}
+			if !post.ScheduledFor.IsZero() {
+				postMap["scheduledFor"] = post.ScheduledFor
+			}
+			posts = append(posts, postMap)
+		}
+		result["Post"] = posts
 	}
 
 	json.NewEncoder(w).Encode(result)

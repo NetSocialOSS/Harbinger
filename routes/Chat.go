@@ -237,7 +237,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Verify user exists
 	var user types.User
-	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	err = userCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
@@ -256,12 +256,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Check if chat is allowed in the coterie
-	if !coterie.IsChatAllowed {
-		http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
 		return
 	}
 

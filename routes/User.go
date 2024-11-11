@@ -123,6 +123,8 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	action := r.URL.Query().Get("action")
+
 	var user types.User
 	userCollection := db.Database("SocialFlux").Collection("users")
 	result := userCollection.FindOne(r.Context(), bson.M{"username": username})
@@ -141,42 +143,35 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If the user is private, do not show their posts, followers, or following
+	// Initialize response with user details
+	response := map[string]interface{}{
+		"username":       user.Username,
+		"displayname":    user.DisplayName,
+		"isVerified":     user.IsVerified,
+		"isOrganisation": user.IsOrganisation,
+		"isDeveloper":    user.IsDeveloper,
+		"isOwner":        user.IsOwner,
+		"isBanned":       user.IsBanned,
+		"isModerator":    user.IsModerator,
+		"isPartner":      user.IsPartner,
+		"bio":            user.Bio,
+		"createdAt":      user.CreatedAt,
+		"profilePicture": user.ProfilePicture,
+		"profileBanner":  user.ProfileBanner,
+		"followersCount": len(user.Followers),
+		"followingCount": len(user.Following),
+		"links":          user.Links,
+	}
+
+	// If the user is private, do not show additional data
 	if user.IsPrivate {
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"username":       user.Username,
-			"displayname":    user.DisplayName,
-			"isVerified":     user.IsVerified,
-			"isOrganisation": user.IsOrganisation,
-			"isPrivate":      user.IsPrivate,
-			"isDeveloper":    user.IsDeveloper,
-			"isOwner":        user.IsOwner,
-			"isBanned":       user.IsBanned,
-			"isModerator":    user.IsModerator,
-			"isPartner":      user.IsPartner,
-			"bio":            user.Bio,
-			"createdAt":      user.CreatedAt,
-			"followersCount": len(user.Followers),
-			"followingCount": len(user.Following),
-			"links":          user.Links,
-			"message":        "This account is private",
-		})
+		response["message"] = "This account is private"
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Fetch posts made by the user without comments, sorted by createdAt in descending order
-	var posts []map[string]interface{}
-	postCollection := db.Database("SocialFlux").Collection("posts")
-	cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
-	if err != nil {
-		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
-		return
-	}
-
-	// Create a map to store user IDs and their corresponding usernames
+	// Include followers and following usernames if action is set to "followers" or "following"
 	userIDToUsername := make(map[primitive.ObjectID]string)
-
-	// Utility function to get username from ID
 	getUsername := func(id primitive.ObjectID) (string, error) {
 		if username, found := userIDToUsername[id]; found {
 			return username, nil
@@ -193,150 +188,136 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return u.Username, nil
 	}
 
-	for cursor.Next(r.Context()) {
-		var post types.Post
-		err := cursor.Decode(&post)
+	// Convert followers and following from IDs to usernames
+	if action == "followers" || action == "following" {
+		var userIDs []string
+		if action == "followers" {
+			userIDs = user.Followers
+		} else {
+			userIDs = user.Following
+		}
+
+		var usernames []string
+		for _, idStr := range userIDs {
+			id, err := primitive.ObjectIDFromHex(idStr)
+			if err != nil {
+				http.Error(w, "Invalid user ID", http.StatusInternalServerError)
+				return
+			}
+			var u types.User
+			err = userCollection.FindOne(r.Context(), bson.M{"_id": id}).Decode(&u)
+			if err != nil {
+				if err == mongo.ErrNoDocuments {
+					usernames = append(usernames, "Unknown User")
+					continue
+				}
+				http.Error(w, "Error fetching user data", http.StatusInternalServerError)
+				return
+			}
+			usernames = append(usernames, u.Username)
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			action: usernames,
+		})
+		return
+	}
+
+	// Fetch posts if action is not specified or action is "posts"
+	if action == "" || action == "posts" {
+		var posts []map[string]interface{}
+		postCollection := db.Database("SocialFlux").Collection("posts")
+		cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 		if err != nil {
-			http.Error(w, "Error decoding posts data", http.StatusInternalServerError)
+			http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
 			return
 		}
 
-		// Fetch author details
-		var author types.User
-		err = userCollection.FindOne(r.Context(), bson.M{"_id": post.Author}).Decode(&author)
-		if err != nil {
-			http.Error(w, "Error fetching author data", http.StatusInternalServerError)
-			return
-		}
-
-		// Replace user IDs in hearts with usernames
-		var hearts []string
-		for _, heartIDHex := range post.Hearts {
-			heartID, err := primitive.ObjectIDFromHex(heartIDHex)
+		for cursor.Next(r.Context()) {
+			var post types.Post
+			err := cursor.Decode(&post)
 			if err != nil {
-				http.Error(w, "Invalid heart ID", http.StatusInternalServerError)
+				http.Error(w, "Error decoding posts data", http.StatusInternalServerError)
 				return
 			}
-			username, err := getUsername(heartID)
+
+			// Fetch author details
+			var author types.User
+			err = userCollection.FindOne(r.Context(), bson.M{"_id": post.Author}).Decode(&author)
 			if err != nil {
-				http.Error(w, "Error fetching heart user data", http.StatusInternalServerError)
+				http.Error(w, "Error fetching author data", http.StatusInternalServerError)
 				return
 			}
-			hearts = append(hearts, username)
-		}
 
-		// Calculate total votes for polls if applicable
-		if post.Poll != nil {
-			totalVotes := 0
-			for i := range post.Poll {
-				for j := range post.Poll[i].Options {
-					optionVoteCount := len(post.Poll[i].Options[j].Votes)
-					totalVotes += optionVoteCount
+			// Replace user IDs in hearts with usernames
+			var hearts []string
+			for _, heartIDHex := range post.Hearts {
+				heartID, err := primitive.ObjectIDFromHex(heartIDHex)
+				if err != nil {
+					http.Error(w, "Invalid heart ID", http.StatusInternalServerError)
+					return
+				}
+				username, err := getUsername(heartID)
+				if err != nil {
+					http.Error(w, "Error fetching heart user data", http.StatusInternalServerError)
+					return
+				}
+				hearts = append(hearts, username)
+			}
 
-					// Clear votes from the response but set vote count
-					post.Poll[i].Options[j].Votes = nil
-					post.Poll[i].Options[j].VoteCount = optionVoteCount
+			// Process poll data if applicable
+			if post.Poll != nil {
+				totalVotes := 0
+				for i := range post.Poll {
+					for j := range post.Poll[i].Options {
+						optionVoteCount := len(post.Poll[i].Options[j].Votes)
+						totalVotes += optionVoteCount
+
+						post.Poll[i].Options[j].Votes = nil
+						post.Poll[i].Options[j].VoteCount = optionVoteCount
+					}
+				}
+				if len(post.Poll) > 0 {
+					post.Poll[0].TotalVotes = totalVotes
 				}
 			}
-			// Set total votes for the first poll in the list
-			if len(post.Poll) > 0 {
-				post.Poll[0].TotalVotes = totalVotes
-			}
-		}
 
-		// Get current time
-		now := time.Now()
-
-		// Check the scheduled time
-		if !post.ScheduledFor.IsZero() {
-			if post.ScheduledFor.After(now) {
-				// Post is scheduled for the future, skip it
+			// Skip future scheduled posts
+			now := time.Now()
+			if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
 				continue
 			}
-			// If the scheduledFor is today or in the past, we continue to process the post
-		}
 
-		// Construct the post response data
-		postData := map[string]interface{}{
-			"_id":     post.ID,
-			"title":   post.Title,
-			"content": post.Content,
-			"authorDetails": map[string]interface{}{
-				"username":       author.Username,
-				"isVerified":     author.IsVerified,
-				"isOrganisation": author.IsOrganisation,
-				"profileBanner":  author.ProfileBanner,
-				"profilePicture": author.ProfilePicture,
-				"isDeveloper":    author.IsDeveloper,
-				"isPartner":      author.IsPartner,
-				"isOwner":        author.IsOwner,
-				"isModerator":    user.IsModerator,
-			},
-			"poll":          post.Poll,
-			"image":         post.Image,
-			"createdAt":     post.CreatedAt,
-			"hearts":        hearts,
-			"commentNumber": len(post.Comments),
+			postData := map[string]interface{}{
+				"_id":     post.ID,
+				"title":   post.Title,
+				"content": post.Content,
+				"authorDetails": map[string]interface{}{
+					"username":       author.Username,
+					"isVerified":     author.IsVerified,
+					"isOrganisation": author.IsOrganisation,
+					"profileBanner":  author.ProfileBanner,
+					"profilePicture": author.ProfilePicture,
+					"isDeveloper":    author.IsDeveloper,
+					"isPartner":      author.IsPartner,
+					"isOwner":        author.IsOwner,
+					"isModerator":    user.IsModerator,
+				},
+				"poll":          post.Poll,
+				"image":         post.Image,
+				"createdAt":     post.CreatedAt,
+				"hearts":        hearts,
+				"commentNumber": len(post.Comments),
+			}
+			if !post.ScheduledFor.IsZero() {
+				postData["scheduledFor"] = post.ScheduledFor
+			}
+			posts = append(posts, postData)
 		}
-		if !post.ScheduledFor.IsZero() {
-			postData["scheduledFor"] = post.ScheduledFor
-		}
-		posts = append(posts, postData)
+		response["posts"] = posts
 	}
 
-	// Convert followers and following from IDs to usernames
-	var followersUsernames, followingUsernames []string
-
-	for _, followerID := range user.Followers {
-		followerObjectID, err := primitive.ObjectIDFromHex(followerID)
-		if err != nil {
-			http.Error(w, "Invalid follower ID", http.StatusInternalServerError)
-			return
-		}
-		username, err := getUsername(followerObjectID)
-		if err != nil {
-			http.Error(w, "Error fetching follower user data", http.StatusInternalServerError)
-			return
-		}
-		followersUsernames = append(followersUsernames, username)
-	}
-
-	for _, followingID := range user.Following {
-		followingObjectID, err := primitive.ObjectIDFromHex(followingID)
-		if err != nil {
-			http.Error(w, "Invalid following ID", http.StatusInternalServerError)
-			return
-		}
-		username, err := getUsername(followingObjectID)
-		if err != nil {
-			http.Error(w, "Error fetching following user data", http.StatusInternalServerError)
-			return
-		}
-		followingUsernames = append(followingUsernames, username)
-	}
-
-	// Return full user data if the account is not private
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"username":       user.Username,
-		"isVerified":     user.IsVerified,
-		"isOrganisation": user.IsOrganisation,
-		"isDeveloper":    user.IsDeveloper,
-		"isOwner":        user.IsOwner,
-		"isBanned":       user.IsBanned,
-		"isModerator":    user.IsModerator,
-		"isPartner":      user.IsPartner,
-		"displayname":    user.DisplayName,
-		"profilePicture": user.ProfilePicture,
-		"profileBanner":  user.ProfileBanner,
-		"bio":            user.Bio,
-		"createdAt":      user.CreatedAt,
-		"followersCount": len(user.Followers),
-		"followingCount": len(user.Following),
-		"followers":      followersUsernames,
-		"following":      followingUsernames,
-		"links":          user.Links,
-		"posts":          posts,
-	})
+	json.NewEncoder(w).Encode(response)
 }
 
 func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
