@@ -168,6 +168,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		"isVerified":     coterie.IsVerified,
 		"isOrganisation": coterie.IsOrganisation,
 		"createdAt":      coterie.CreatedAt,
+		"isChatAllowed":  coterie.IsChatAllowed,
 		"TotalMembers":   len(memberDetails),
 	}
 

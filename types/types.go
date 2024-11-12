@@ -157,7 +157,7 @@ type Coterie struct {
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
 	Banner         string                     `bson:"banner" json:"banner,omitempty"`
 	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
-	IsChatAllowed  bool                       `bson:"chatallowed" json:"chatallowed"`
+	IsChatAllowed  bool                       `bson:"isChatAllowed" json:"isChatAllowed"`
 	IsVerified     bool                       `json:"isVerified"`
 	TotalPosts     int                        `json:"totalPosts,omitempty"`
 	Roles          map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`
