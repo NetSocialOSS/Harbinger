@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
+	"time"
 
 	"netsocial/types"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// GetPosts retrieves all blog posts from the database
 func GetPosts(w http.ResponseWriter, r *http.Request) {
 	db, ok := r.Context().Value("db").(*mongo.Client)
 	if !ok {
@@ -21,6 +25,7 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	blogCollection := db.Database("SocialFlux").Collection("blogposts")
+	userCollection := db.Database("SocialFlux").Collection("users")
 
 	var blogs []types.BlogPost
 	cursor, err := blogCollection.Find(context.Background(), bson.D{})
@@ -35,10 +40,37 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var responsePosts []map[string]interface{}
+
+	for _, blog := range blogs {
+		var user types.User
+		err := userCollection.FindOne(context.Background(), bson.M{"_id": blog.AuthorID}).Decode(&user)
+		if err == mongo.ErrNoDocuments {
+			log.Println("Warning: Author not found for blog post ID:", blog.ID)
+			continue
+		} else if err != nil {
+			logAndReturnError(w, "Failed to fetch author details", err)
+			return
+		}
+
+		postMap := map[string]interface{}{
+			"id":           blog.ID,
+			"slug":         blog.Slug,
+			"title":        blog.Title,
+			"date":         blog.Date,
+			"authorname":   user.DisplayName,
+			"authoravatar": user.ProfilePicture,
+			"overview":     blog.Overview,
+			"content":      blog.Content,
+		}
+
+		responsePosts = append(responsePosts, postMap)
+	}
+
 	// Set the response header to application/json
 	w.Header().Set("Content-Type", "application/json")
-	// Encode blogs to JSON and write to the response
-	if err := json.NewEncoder(w).Encode(blogs); err != nil {
+	// Encode responsePosts to JSON and write to the response
+	if err := json.NewEncoder(w).Encode(responsePosts); err != nil {
 		logAndReturnError(w, "Failed to encode blog posts", err)
 		return
 	}
@@ -48,4 +80,76 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 func logAndReturnError(w http.ResponseWriter, msg string, err error) {
 	log.Println(msg+":", err)
 	http.Error(w, msg, http.StatusInternalServerError)
+}
+
+func AddBlogPost(w http.ResponseWriter, r *http.Request) {
+	db, ok := r.Context().Value("db").(*mongo.Client)
+	if !ok {
+		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		return
+	}
+
+	UserID := r.URL.Query().Get("userId")
+	Title := r.URL.Query().Get("title")
+	Overview := r.URL.Query().Get("overview")
+
+	var Content []types.PostEntry
+	contentStr := r.URL.Query().Get("content")
+	if err := json.Unmarshal([]byte(contentStr), &Content); err != nil {
+		http.Error(w, "Invalid content format", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := primitive.ObjectIDFromHex(UserID)
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	userCollection := db.Database("SocialFlux").Collection("users")
+	var user types.User
+
+	err = userCollection.FindOne(context.Background(), bson.M{"_id": userID}).Decode(&user)
+	if err == mongo.ErrNoDocuments || !(user.IsDeveloper || user.IsOwner) {
+		http.Error(w, "User not authorized to add posts", http.StatusForbidden)
+		return
+	} else if err != nil {
+		logAndReturnError(w, "Failed to fetch user data", err)
+		return
+	}
+
+	blogCollection := db.Database("SocialFlux").Collection("blogposts")
+	newPost := types.BlogPost{
+		ID:       uuid.New().String(),
+		Slug:     generateSlug(Title),
+		Title:    Title,
+		Date:     time.Now().Format("January 02, 2006"),
+		AuthorID: user.ID,
+		Overview: Overview,
+		Content:  Content,
+	}
+
+	_, err = blogCollection.InsertOne(context.Background(), newPost)
+	if err != nil {
+		logAndReturnError(w, "Failed to insert blog post", err)
+		return
+	}
+
+	// Respond with success
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(newPost); err != nil {
+		logAndReturnError(w, "Failed to encode response", err)
+		return
+	}
+}
+
+// Helper function to generate a slug from the title
+func generateSlug(title string) string {
+	return strings.ToLower(strings.ReplaceAll(title, " ", "-"))
+}
+
+func Blogs(r chi.Router) {
+	r.Get("/blog/posts/@all", GetPosts)
+	r.Post("/blog/new", AddBlogPost)
 }

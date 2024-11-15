@@ -187,13 +187,13 @@ type Message struct {
 }
 
 type BlogPost struct {
-	Slug         string      `json:"slug"`
-	Title        string      `json:"title"`
-	Date         string      `json:"date"`
-	AuthorName   string      `json:"authorname"`
-	Overview     string      `json:"overview"`
-	Authoravatar string      `json:"authoravatar"`
-	Content      []PostEntry `json:"content"`
+	ID       string             `bson:"id,omitempty" json:"id"`
+	Slug     string             `json:"slug"`
+	Title    string             `json:"title"`
+	Date     string             `json:"date"`
+	AuthorID primitive.ObjectID `json:"authorId"`
+	Overview string             `json:"overview"`
+	Content  []PostEntry        `json:"content"`
 }
 
 type PostEntry struct {
