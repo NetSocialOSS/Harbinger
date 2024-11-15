@@ -157,7 +157,7 @@ type Coterie struct {
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
 	Banner         string                     `bson:"banner" json:"banner,omitempty"`
 	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
-	IsChatAllowed  bool                       `bson:"chatallowed" json:"chatallowed"`
+	IsChatAllowed  bool                       `bson:"isChatAllowed" json:"isChatAllowed"`
 	IsVerified     bool                       `json:"isVerified"`
 	TotalPosts     int                        `json:"totalPosts,omitempty"`
 	Roles          map[string][]string        `bson:"roles,omitempty" json:"roles,omitempty"`
@@ -187,13 +187,13 @@ type Message struct {
 }
 
 type BlogPost struct {
-	Slug         string      `json:"slug"`
-	Title        string      `json:"title"`
-	Date         string      `json:"date"`
-	AuthorName   string      `json:"authorname"`
-	Overview     string      `json:"overview"`
-	Authoravatar string      `json:"authoravatar"`
-	Content      []PostEntry `json:"content"`
+	ID       string             `bson:"id,omitempty" json:"id"`
+	Slug     string             `json:"slug"`
+	Title    string             `json:"title"`
+	Date     string             `json:"date"`
+	AuthorID primitive.ObjectID `json:"authorId"`
+	Overview string             `json:"overview"`
+	Content  []PostEntry        `json:"content"`
 }
 
 type PostEntry struct {

@@ -107,7 +107,7 @@ func main() {
 
 	// Misc routes
 	routes.Stats(r)
-	r.Get("/blog/posts/@all", routes.GetPosts)
+	routes.Blogs(r)
 	r.Get("/partners/@all", routes.GetAllPartner)
 	r.NotFound(NotFoundHandler)
 

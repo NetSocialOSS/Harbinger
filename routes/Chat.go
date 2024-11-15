@@ -102,6 +102,50 @@ func decrypt(cipherText string) ([]byte, error) {
 	return unpad(ciphertext)
 }
 
+// CheckCoterieChatAllowed checks if chat is allowed in the specified coterie.
+func CheckCoterieChatAllowed(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		db, ok := r.Context().Value("db").(*mongo.Client)
+		if !ok {
+			http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// Extract the coterie name from the query parameters
+		coterieName := r.URL.Query().Get("coterieName")
+		if coterieName == "" {
+			http.Error(w, `{"error": "Missing required field: coterieName"}`, http.StatusBadRequest)
+			return
+		}
+
+		coterieCollection := db.Database("SocialFlux").Collection("coterie")
+
+		// Find the coterie to check if chat is allowed
+		var coterie types.Coterie
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		err := coterieCollection.FindOne(ctx, bson.M{"name": coterieName}).Decode(&coterie)
+		if err != nil {
+			if err == mongo.ErrNoDocuments {
+				http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+				return
+			}
+			http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
+			return
+		}
+
+		// Check if chat is allowed for this coterie
+		if !coterie.IsChatAllowed {
+			http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
+			return
+		}
+
+		// Proceed to the next handler if chat is allowed
+		next.ServeHTTP(w, r)
+	})
+}
+
 // PostMessage allows a user to post a message in a coterie.
 func PostMessage(w http.ResponseWriter, r *http.Request) {
 	db, ok := r.Context().Value("db").(*mongo.Client)
@@ -155,12 +199,6 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Check if chat is allowed in the coterie
-	if !coterie.IsChatAllowed {
-		http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
 		return
 	}
 
@@ -237,7 +275,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 
 	// Verify user exists
 	var user types.User
-	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	err = userCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
@@ -256,12 +294,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		http.Error(w, `{"error": "Error finding coterie: `+err.Error()+`"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Check if chat is allowed in the coterie
-	if !coterie.IsChatAllowed {
-		http.Error(w, `{"error": "Chatting is disabled for this coterie."}`, http.StatusForbidden)
 		return
 	}
 
@@ -318,7 +350,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 			"author": map[string]interface{}{
 				"username":       messageUser.Username,
 				"profilePicture": messageUser.ProfilePicture,
-				"profileBanner":  messageUser.ProfileBanner,
 			},
 		})
 	}
@@ -331,6 +362,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func HavokRoutes(r *chi.Mux) {
-	r.Post("/new/message", (middlewares.DiscordErrorReport(http.HandlerFunc(PostMessage)).ServeHTTP))
-	r.Get("/messages/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(FetchMessages)).ServeHTTP))
+	r.With(CheckCoterieChatAllowed).Post("/new/message", middlewares.DiscordErrorReport(http.HandlerFunc(PostMessage)).ServeHTTP)
+	r.With(CheckCoterieChatAllowed).Get("/messages/@all", middlewares.DiscordErrorReport(http.HandlerFunc(FetchMessages)).ServeHTTP)
 }

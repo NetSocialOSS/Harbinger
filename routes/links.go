@@ -15,13 +15,11 @@ import (
 func ExtractLinkPreview(w http.ResponseWriter, r *http.Request) {
 	urlParam := r.URL.Query().Get("url")
 
-	// Validate the URL parameter
 	if urlParam == "" {
 		http.Error(w, `{"error": "URL parameter is required"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Parse the URL to ensure it's valid
 	parsedURL, err := url.Parse(urlParam)
 	if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
 		http.Error(w, `{"error": "Invalid URL"}`, http.StatusBadRequest)
