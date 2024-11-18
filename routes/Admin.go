@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -22,13 +22,13 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.URL.Query().Get("username")
-	action := r.URL.Query().Get("action")
-	badge := r.URL.Query().Get("badge")
-	modID := r.URL.Query().Get("modid")
+	username := r.Header.Get("username")
+	action := r.Header.Get("action")
+	badge := r.Header.Get("badge")
+	modID := r.Header.Get("modid")
 
 	// Validate modID
-	modIDHex, err := primitive.ObjectIDFromHex(modID)
+	_, err := uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -36,7 +36,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner
 	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"_id": modIDHex}
+	modFilter := bson.M{"id": modID}
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
@@ -108,11 +108,11 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postID := r.URL.Query().Get("postId")
-	modID := r.URL.Query().Get("modid")
+	postID := r.Header.Get("postId")
+	modID := r.Header.Get("modid")
 
 	// Validate modID
-	modIDHex, err := primitive.ObjectIDFromHex(modID)
+	_, err := uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -120,7 +120,7 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner
 	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"_id": modIDHex}
+	modFilter := bson.M{"id": modID}
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
@@ -136,7 +136,7 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Delete the post from the database
 	postsCollection := db.Database("SocialFlux").Collection("posts")
-	deleteFilter := bson.M{"_id": postID}
+	deleteFilter := bson.M{"id": postID}
 	result, err := postsCollection.DeleteOne(context.Background(), deleteFilter)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
@@ -160,11 +160,11 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coterieName := r.URL.Query().Get("name")
-	modID := r.URL.Query().Get("modid")
+	coterieName := r.Header.Get("name")
+	modID := r.Header.Get("modid")
 
 	// Validate modID
-	modIDHex, err := primitive.ObjectIDFromHex(modID)
+	_, err := uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -172,7 +172,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner
 	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"_id": modIDHex}
+	modFilter := bson.M{"id": modID}
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {
@@ -212,12 +212,12 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.URL.Query().Get("username")
-	action := r.URL.Query().Get("action")
-	modID := r.URL.Query().Get("modid")
+	username := r.Header.Get("username")
+	action := r.Header.Get("action")
+	modID := r.Header.Get("modid")
 
 	// Validate modID
-	modIDHex, err := primitive.ObjectIDFromHex(modID)
+	_, err := uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -225,7 +225,7 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner
 	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"_id": modIDHex}
+	modFilter := bson.M{"id": modID}
 	var modUser types.User
 	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
 	if err != nil {

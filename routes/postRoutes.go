@@ -29,6 +29,8 @@ func RateLimit(limit int, burst time.Duration) func(http.Handler) http.Handler {
 
 func PostRoutes(r chi.Router) {
 	r.With(RateLimit(5, 5*time.Minute)).Post("/comment/add", (middlewares.DiscordErrorReport(http.HandlerFunc(AddComment)).ServeHTTP))
+	r.Get("/posts/@all", GetAllPosts)
+	r.Get("/posts/{id}", GetPostById)
 	r.With(RateLimit(5, 5*time.Minute)).Post("/post/action", (middlewares.DiscordErrorReport(http.HandlerFunc(PostActions)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Delete("/post/delete", (middlewares.DiscordErrorReport(http.HandlerFunc(DeletePost)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/post/add", (middlewares.DiscordErrorReport(http.HandlerFunc(AddPost)).ServeHTTP))

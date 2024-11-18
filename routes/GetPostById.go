@@ -13,7 +13,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -60,7 +59,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	// Fetch author details from the users collection
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	var author types.Author
-	if err := usersCollection.FindOne(context.Background(), bson.M{"_id": post.Author}).Decode(&author); err != nil {
+	if err := usersCollection.FindOne(context.Background(), bson.M{"id": post.Author}).Decode(&author); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch author details: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -69,7 +68,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var comments []types.Comment
 	for _, comment := range post.Comments {
 		var commentAuthor types.Author
-		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": comment.Author}).Decode(&commentAuthor); err != nil {
+		if err := usersCollection.FindOne(context.Background(), bson.M{"id": comment.Author}).Decode(&commentAuthor); err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch author details for comment: %v", err), http.StatusInternalServerError)
 			return
 		}
@@ -101,14 +100,8 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	// Update hearts with author usernames
 	var hearts []string
 	for _, heartID := range post.Hearts {
-		heartObjectID, err := primitive.ObjectIDFromHex(heartID)
-		if err != nil {
-			hearts = append(hearts, "Unknown")
-			continue
-		}
-
 		var heartAuthor types.Author
-		if err := usersCollection.FindOne(context.Background(), bson.M{"_id": heartObjectID}).Decode(&heartAuthor); err != nil {
+		if err := usersCollection.FindOne(context.Background(), bson.M{"id": heartID}).Decode(&heartAuthor); err != nil {
 			hearts = append(hearts, "Unknown")
 			continue
 		}

@@ -6,13 +6,14 @@ import (
 	"log"
 	"net/http"
 	"netsocial/middlewares"
+	"netsocial/types"
 	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid" // Import the uuid package
 	"github.com/gtuk/discordwebhook"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -20,13 +21,13 @@ import (
 func getReporterUsername(ctx context.Context, db *mongo.Client, reporterID string) (string, error) {
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	// Convert reporterID string to ObjectID
-	objID, err := primitive.ObjectIDFromHex(reporterID)
+	// Convert reporterID string to UUID
+	parsedID, err := uuid.Parse(reporterID)
 	if err != nil {
-		return "", fmt.Errorf("invalid reporter ID format")
+		return "", fmt.Errorf("invalid reporter ID format: %v", err)
 	}
 
-	filter := bson.M{"_id": objID}
+	filter := bson.M{"id": parsedID.String()}
 
 	var result struct {
 		Username string `bson:"username"`
@@ -45,8 +46,14 @@ func getReporterUsername(ctx context.Context, db *mongo.Client, reporterID strin
 // ReportUser handles reporting a user
 func ReportUser(w http.ResponseWriter, r *http.Request) {
 	reportedUsername := r.URL.Query().Get("reportedUsername")
-	reporterID := r.URL.Query().Get("reporterID")
 	reason := r.URL.Query().Get("reason")
+	encryptedreporterID := r.Header.Get("X-userID")
+
+	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	db := r.Context().Value("db").(*mongo.Client)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
@@ -104,8 +111,15 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 // ReportPost handles reporting a post
 func ReportPost(w http.ResponseWriter, r *http.Request) {
 	reportedPostID := r.URL.Query().Get("reportedPostID")
-	reporterID := r.URL.Query().Get("reporterID")
 	reason := r.URL.Query().Get("reason")
+
+	encryptedreporterID := r.Header.Get("X-userID")
+
+	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	db := r.Context().Value("db").(*mongo.Client)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
@@ -122,7 +136,6 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 
 	postCollection := db.Database("SocialFlux").Collection("posts")
 
-	// Check if the reportedPostID exists in the posts collection
 	filter := bson.M{"_id": reportedPostID}
 	var existingPost struct {
 		ID string `bson:"_id,omitempty"`
@@ -139,6 +152,7 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Send report to Discord webhook
 	webhookURL := os.Getenv("Report_URL")
 
 	title := "🚨 Post Report 🚨"
@@ -182,8 +196,15 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 // ReportCoterie handles reporting a coterie
 func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 	CoterieName := r.URL.Query().Get("Coterie")
-	reporterID := r.URL.Query().Get("reporterID")
 	reason := r.URL.Query().Get("reason")
+
+	encryptedreporterID := r.Header.Get("X-userID")
+
+	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	db := r.Context().Value("db").(*mongo.Client)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
@@ -202,10 +223,7 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the Coterie exists in the collection
 	filter := bson.M{"name": CoterieName}
-	var Coterie struct {
-		ID   string `bson:"_id,omitempty"`
-		Name string `json:"name"`
-	}
+	var Coterie types.Coterie
 
 	err = coterieCollection.FindOne(r.Context(), filter).Decode(&Coterie)
 	if err != nil {

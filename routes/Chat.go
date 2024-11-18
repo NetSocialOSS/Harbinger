@@ -1,19 +1,11 @@
 package routes
 
 import (
-	"bytes"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
-	"io"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
-	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,85 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-// Get the AES key from environment variable
-func getAESKey() ([]byte, error) {
-	key := os.Getenv("aeskey")
-	if len(key) == 0 {
-		return nil, errors.New("AES key is not set in environment variables")
-	}
-	return []byte(key), nil
-}
-
-// PKCS7 padding
-func pad(data []byte) []byte {
-	padLen := aes.BlockSize - len(data)%aes.BlockSize
-	pad := bytes.Repeat([]byte{byte(padLen)}, padLen)
-	return append(data, pad...)
-}
-
-// Remove PKCS7 padding
-func unpad(data []byte) ([]byte, error) {
-	if len(data) == 0 {
-		return nil, errors.New("data to unpad is empty")
-	}
-	padLen := data[len(data)-1]
-	if int(padLen) > len(data) || padLen > aes.BlockSize {
-		return nil, errors.New("invalid padding size")
-	}
-	return data[:len(data)-int(padLen)], nil
-}
-
-// Encrypt the given plaintext using AES
-func encrypt(plainText []byte) (string, error) {
-	key, err := getAESKey()
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-
-	// Pad the plaintext
-	plainText = pad(plainText)
-
-	ciphertext := make([]byte, aes.BlockSize+len(plainText))
-	iv := ciphertext[:aes.BlockSize]
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return "", err
-	}
-
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext[aes.BlockSize:], plainText)
-
-	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// Decrypt the given ciphertext using AES
-func decrypt(cipherText string) ([]byte, error) {
-	key, err := getAESKey()
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-
-	ciphertext, _ := base64.StdEncoding.DecodeString(cipherText)
-	if len(ciphertext) < aes.BlockSize {
-		return nil, errors.New("ciphertext too short")
-	}
-	iv := ciphertext[:aes.BlockSize]
-	ciphertext = ciphertext[aes.BlockSize:]
-
-	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(ciphertext, ciphertext)
-
-	// Unpad the decrypted data
-	return unpad(ciphertext)
-}
 
 // CheckCoterieChatAllowed checks if chat is allowed in the specified coterie.
 func CheckCoterieChatAllowed(next http.Handler) http.Handler {
@@ -217,7 +130,7 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Encrypt the content
-	encryptedContent, err := encrypt([]byte(content))
+	encryptedContent, err := middlewares.EncryptAES(content)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to encrypt message: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -329,7 +242,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 	var formattedMessages []map[string]interface{}
 	for _, message := range messages {
 		// Decrypt the content
-		decryptedContent, err := decrypt(message.Content)
+		decryptedContent, err := middlewares.DecryptAES(message.Content)
 		if err != nil {
 			http.Error(w, `{"error": "Error decrypting message content: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return

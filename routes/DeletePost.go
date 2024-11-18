@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"netsocial/middlewares"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-// DeletePost handles the deletion of a post by its ID and author's primitive object ID
+// DeletePost handles the deletion of a post by its ID and author's UUID
 func DeletePost(w http.ResponseWriter, r *http.Request) {
 	// Get the database connection from the context
 	db, ok := r.Context().Value("db").(*mongo.Client)
@@ -23,21 +23,26 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 	// Get the posts collection
 	postsCollection := db.Database("SocialFlux").Collection("posts")
 
-	// Extract post ID and author ID from query parameters
-	postID := r.URL.Query().Get("postid")
-	authorID := r.URL.Query().Get("authorid")
+	// Extract post ID and author ID from headers
+	postID := r.Header.Get("X-postid")
+	encryptedauthorID := r.Header.Get("X-userID")
 
-	// Convert the author ID to a primitive.ObjectID
-	authorObjectID, err := primitive.ObjectIDFromHex(authorID)
+	authorID, err := middlewares.DecryptAES(encryptedauthorID)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid author ID format"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the IDs are not empty
+	if postID == "" || encryptedauthorID == "" {
+		http.Error(w, `{"error": "Post ID or Author ID is missing"}`, http.StatusBadRequest)
 		return
 	}
 
 	// Create a filter for deleting the post
 	filter := bson.M{
 		"_id":    postID,
-		"author": authorObjectID,
+		"author": authorID, // No conversion needed for UUID
 	}
 
 	// Set a context with a timeout for the delete operation

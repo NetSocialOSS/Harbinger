@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"netsocial/middlewares"
 	"netsocial/types"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -25,20 +26,24 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse query parameters
-	postID := r.URL.Query().Get("id")
-	content := r.URL.Query().Get("content")
-	authorIDStr := r.URL.Query().Get("author")
+	postID := r.Header.Get("X-id")
+	content := r.Header.Get("X-content")
+	encryptedauthorID := r.Header.Get("X-userID")
 
 	// Validate the inputs
-	if postID == "" || content == "" || authorIDStr == "" {
+	if postID == "" || content == "" || encryptedauthorID == "" {
 		http.Error(w, `{"error": "Missing required query parameters"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Convert authorIDStr to ObjectID
-	authorObjectID, err := primitive.ObjectIDFromHex(authorIDStr)
+	authorID, err := middlewares.DecryptAES(encryptedauthorID)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid author ID"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
+	if len(authorID) != 36 {
+		http.Error(w, `{"error": "Invalid author ID format"}`, http.StatusBadRequest)
 		return
 	}
 
@@ -46,7 +51,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	comment := types.NewComment{
 		ID:        primitive.NewObjectID(),
 		Content:   content,
-		Author:    authorObjectID,
+		Author:    authorID,
 		CreatedAt: time.Now(),
 	}
 
@@ -56,7 +61,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 
 	// Verify that the author exists
 	var author types.User
-	err = usersCollection.FindOne(context.Background(), bson.M{"_id": authorObjectID}).Decode(&author)
+	err = usersCollection.FindOne(context.Background(), bson.M{"id": authorID}).Decode(&author)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, `{"error": "Author not found"}`, http.StatusBadRequest)
@@ -73,8 +78,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update the post with the new comment
-	filter := bson.M{"_id": postID} // Use postID as a string
+	filter := bson.M{"_id": postID}
 	update := bson.M{"$push": bson.M{"comments": comment}}
 	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
