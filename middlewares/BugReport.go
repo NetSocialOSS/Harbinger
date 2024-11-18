@@ -94,7 +94,7 @@ func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
 // redactSensitiveParameters redacts sensitive query parameters from the URL
 func redactSensitiveParameters(u *url.URL) string {
 	query := u.Query()
-	sensitiveKeys := []string{"reporterID", "userId", "user_id", "modid", "password"}
+	sensitiveKeys := []string{"reporterID", "UserID", "session_id", "userId", "user_id", "modid"}
 
 	for _, key := range sensitiveKeys {
 		if query.Has(key) {

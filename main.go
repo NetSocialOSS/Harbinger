@@ -43,7 +43,7 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{"https://*", "http://*"},
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowedHeaders:   []string{"*"},
 		ExposedHeaders:   []string{"Link"},
 		AllowCredentials: true,
 	}))
@@ -52,6 +52,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.CleanPath)
+	//r.Use(middleware.Logger)
 	r.Use(middleware.AllowContentType("application/json"))
 
 	// Middleware: Database Connection
@@ -82,9 +83,7 @@ func main() {
 	})
 
 	// Post Routes
-	r.Get("/posts/@all", routes.GetAllPosts)
 	r.Get("/link/extract", routes.ExtractLinkPreview)
-	r.Get("/posts/{id}", routes.GetPostById)
 	routes.PostRoutes(r)
 
 	// Admin

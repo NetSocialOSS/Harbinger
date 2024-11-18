@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"netsocial/middlewares"
 	"netsocial/types"
 
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -48,14 +50,20 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
 
-	title := r.URL.Query().Get("title")
-	content := r.URL.Query().Get("content")
-	userId := r.URL.Query().Get("userId")
-	image := r.URL.Query().Get("image")
-	coterieName := r.URL.Query().Get("coterie")
-	scheduledForStr := r.URL.Query().Get("scheduledFor")
-	optionsStr := r.URL.Query().Get("options")
-	expirationStr := r.URL.Query().Get("expiration")
+	title := r.Header.Get("X-title")
+	content := r.Header.Get("X-content")
+	encrypteduserId := r.Header.Get("X-userID")
+	image := r.Header.Get("X-image")
+	coterieName := r.Header.Get("X-coterie")
+	scheduledForStr := r.Header.Get("X-scheduledFor")
+	optionsStr := r.Header.Get("X-options")
+	expirationStr := r.Header.Get("X-expiration")
+
+	userId, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Split options by comma only if optionsStr is provided
 	var validOptions []string
@@ -82,15 +90,16 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authorID, err := primitive.ObjectIDFromHex(userId)
+	// Validate the userId as a UUID
+	_, err = uuid.Parse(userId)
 	if err != nil {
-		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
+		http.Error(w, "Invalid user ID.", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the user is banned
+	// Check if the user exists and if they are banned
 	var user types.User
-	err = usersCollection.FindOne(r.Context(), bson.M{"_id": authorID}).Decode(&user)
+	err = usersCollection.FindOne(r.Context(), bson.M{"id": userId}).Decode(&user)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return
@@ -178,7 +187,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		"_id":       postID,
 		"title":     title,
 		"content":   content,
-		"author":    authorID,
+		"author":    userId,
 		"hearts":    []string{},
 		"createdAt": time.Now(),
 	}

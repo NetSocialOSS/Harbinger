@@ -4,22 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"netsocial/middlewares"
 	"netsocial/types"
 	"time"
 
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // PostActions handles actions on posts, including like, unlike, and voting.
 func PostActions(w http.ResponseWriter, r *http.Request) {
-	// Get the postId, userId, action, and optionId from query parameters
-	postId := r.URL.Query().Get("postId")
-	userId := r.URL.Query().Get("userId")
+	postId := r.Header.Get("X-postId")
+	encryptedUserID := r.Header.Get("X-userID")
 	action := r.URL.Query().Get("action")
-	optionId := r.URL.Query().Get("optionId")
+	optionId := r.Header.Get("X-optionId")
 
 	// Validate action (supporting "like", "unlike", and "vote")
 	if action != "like" && action != "unlike" && action != "vote" {
@@ -27,10 +27,16 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse userId to primitive.ObjectID
-	userID, err := primitive.ObjectIDFromHex(userId)
+	// Decrypt the user ID
+	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that userId is a valid UUID
+	if _, err := uuid.Parse(userID); err != nil {
+		http.Error(w, `{"error": "Invalid user ID. Must be a valid UUID."}`, http.StatusBadRequest)
 		return
 	}
 
@@ -46,7 +52,7 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the user is banned
 	var user types.User
-	err = usersCollection.FindOne(context.Background(), bson.M{"_id": userID}).Decode(&user)
+	err = usersCollection.FindOne(context.Background(), bson.M{"id": userID}).Decode(&user)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch user details"}`, http.StatusInternalServerError)
 		return
@@ -90,14 +96,7 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Convert optionId to primitive.ObjectID
-		optionObjectID, err := primitive.ObjectIDFromHex(optionId)
-		if err != nil {
-			http.Error(w, `{"error": "Invalid option ID"}`, http.StatusBadRequest)
-			return
-		}
-
-		// Fetch post and check poll expiration
+		// Fetch post and validate poll data
 		var post types.Post
 		err = postsCollection.FindOne(context.Background(), filter).Decode(&post)
 		if err != nil {
@@ -105,40 +104,52 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Check if any poll in the post has expired
+		// Check poll expiration and existence
+		var targetPoll *types.Poll
 		for _, poll := range post.Poll {
-			if poll.Expiration.Before(time.Now()) {
-				http.Error(w, `{"error": "Poll has expired; voting is not allowed"}`, http.StatusForbidden)
-				return
+			if poll.Expiration.After(time.Now()) && poll.ID == optionId {
+				targetPoll = &poll
+				break
 			}
 		}
-
-		// Check if the user has already voted
-		pollFilter := bson.M{
-			"_id":                postId,
-			"poll.options.votes": bson.M{"$ne": userID.Hex()}, // Ensure user hasn't voted yet
+		if targetPoll == nil {
+			http.Error(w, `{"error": "Poll has expired or does not exist"}`, http.StatusForbidden)
+			return
 		}
 
-		// Update the selected option if the user hasn't voted yet
+		// Verify if user has already voted in the poll
+		userAlreadyVoted := false
+		for _, option := range targetPoll.Options {
+			for _, voter := range option.Votes {
+				if voter == userID {
+					userAlreadyVoted = true
+					break
+				}
+			}
+			if userAlreadyVoted {
+				break
+			}
+		}
+		if userAlreadyVoted {
+			http.Error(w, `{"error": "You have already voted in this poll"}`, http.StatusForbidden)
+			return
+		}
+
+		// Update vote for the selected option
 		voteUpdate := bson.M{
-			"$addToSet": bson.M{"poll.$[poll].options.$[option].votes": userID.Hex()},
+			"$addToSet": bson.M{"poll.$[poll].options.$[option].votes": userID},
 			"$inc":      bson.M{"poll.$[poll].options.$[option].voteCount": 1},
 		}
 		arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
 			Filters: []interface{}{
-				bson.M{"poll._id": post.Poll[0].ID},
-				bson.M{"option._id": optionObjectID},
+				bson.M{"poll._id": targetPoll.ID},
+				bson.M{"option._id": optionId},
 			},
 		})
 
-		// Execute the vote update with array filters
-		res, err := postsCollection.UpdateOne(context.Background(), pollFilter, voteUpdate, arrayFilters)
-		if err != nil {
-			http.Error(w, `{"error": "Failed to cast vote"}`, http.StatusInternalServerError)
-			return
-		}
-		if res.ModifiedCount == 0 {
-			http.Error(w, `{"error": "You have already voted or the poll is expired"}`, http.StatusForbidden)
+		res, err := postsCollection.UpdateOne(context.Background(), filter, voteUpdate, arrayFilters)
+		if err != nil || res.ModifiedCount == 0 {
+			http.Error(w, `{"error": "Failed to cast vote or vote already counted"}`, http.StatusInternalServerError)
 			return
 		}
 

@@ -16,7 +16,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/resend/resend-go/v2"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -31,16 +30,14 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 	coteriesCollection := db.Database("SocialFlux").Collection("coteries")
 
 	// Retrieve the userId from query parameters
-	userID := r.URL.Query().Get("userId")
-	if userID == "" {
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
 		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
-
-	// Convert the userID to a primitive.ObjectID
-	objID, err := primitive.ObjectIDFromHex(userID)
+	userId, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
@@ -50,7 +47,7 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 
 	// Retrieve user details to send the goodbye email
 	var user types.User
-	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
+	err = usersCollection.FindOne(ctx, bson.M{"id": userId}).Decode(&user)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
 		return
@@ -64,7 +61,7 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the user exists in the users collection
-	count, err := usersCollection.CountDocuments(ctx, bson.M{"_id": objID})
+	count, err := usersCollection.CountDocuments(ctx, bson.M{"id": userId})
 	if err != nil {
 		http.Error(w, "Failed to check if user exists", http.StatusInternalServerError)
 		return
@@ -75,21 +72,21 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the user from the users collection
-	_, err = usersCollection.DeleteOne(ctx, bson.M{"_id": objID})
+	_, err = usersCollection.DeleteOne(ctx, bson.M{"id": userId})
 	if err != nil {
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
 	// Delete all posts authored by the user
-	_, err = postsCollection.DeleteMany(ctx, bson.M{"author": objID})
+	_, err = postsCollection.DeleteMany(ctx, bson.M{"author": userId})
 	if err != nil {
 		http.Error(w, "Failed to delete posts", http.StatusInternalServerError)
 		return
 	}
 
 	// Delete all coteries owned by the user
-	_, err = coteriesCollection.DeleteMany(ctx, bson.M{"owner": objID})
+	_, err = coteriesCollection.DeleteMany(ctx, bson.M{"owner": userId})
 	if err != nil {
 		http.Error(w, "Failed to delete coteries", http.StatusInternalServerError)
 		return
@@ -171,13 +168,13 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Include followers and following usernames if action is set to "followers" or "following"
-	userIDToUsername := make(map[primitive.ObjectID]string)
-	getUsername := func(id primitive.ObjectID) (string, error) {
+	userIDToUsername := make(map[string]string)
+	getUsername := func(id string) (string, error) {
 		if username, found := userIDToUsername[id]; found {
 			return username, nil
 		}
 		var u types.User
-		err := userCollection.FindOne(r.Context(), bson.M{"_id": id}).Decode(&u)
+		err := userCollection.FindOne(r.Context(), bson.M{"id": id}).Decode(&u)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				return "Unknown User", nil
@@ -198,23 +195,13 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var usernames []string
-		for _, idStr := range userIDs {
-			id, err := primitive.ObjectIDFromHex(idStr)
+		for _, id := range userIDs {
+			username, err := getUsername(id)
 			if err != nil {
-				http.Error(w, "Invalid user ID", http.StatusInternalServerError)
-				return
-			}
-			var u types.User
-			err = userCollection.FindOne(r.Context(), bson.M{"_id": id}).Decode(&u)
-			if err != nil {
-				if err == mongo.ErrNoDocuments {
-					usernames = append(usernames, "Unknown User")
-					continue
-				}
 				http.Error(w, "Error fetching user data", http.StatusInternalServerError)
 				return
 			}
-			usernames = append(usernames, u.Username)
+			usernames = append(usernames, username)
 		}
 
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -243,7 +230,7 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 			// Fetch author details
 			var author types.User
-			err = userCollection.FindOne(r.Context(), bson.M{"_id": post.Author}).Decode(&author)
+			err = userCollection.FindOne(r.Context(), bson.M{"id": post.Author}).Decode(&author)
 			if err != nil {
 				http.Error(w, "Error fetching author data", http.StatusInternalServerError)
 				return
@@ -251,12 +238,7 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 			// Replace user IDs in hearts with usernames
 			var hearts []string
-			for _, heartIDHex := range post.Hearts {
-				heartID, err := primitive.ObjectIDFromHex(heartIDHex)
-				if err != nil {
-					http.Error(w, "Invalid heart ID", http.StatusInternalServerError)
-					return
-				}
+			for _, heartID := range post.Hearts {
 				username, err := getUsername(heartID)
 				if err != nil {
 					http.Error(w, "Error fetching heart user data", http.StatusInternalServerError)
@@ -323,15 +305,14 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*mongo.Client)
 
-	userID := r.URL.Query().Get("userId")
-	if userID == "" {
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
 		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
-
-	objID, err := primitive.ObjectIDFromHex(userID)
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
@@ -365,13 +346,12 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 	if isOrgQueryParam := r.URL.Query().Get("isOrganisation"); isOrgQueryParam != "" {
 		if isOrg, err := strconv.ParseBool(isOrgQueryParam); err == nil {
 			updateFields["isOrganisation"] = isOrg
-
 		}
 	}
 
 	// Perform update operation
 	usersCollection := db.Database("SocialFlux").Collection("users")
-	filter := bson.M{"_id": objID}
+	filter := bson.M{"id": userID}
 	update := bson.M{"$set": updateFields}
 
 	result, err := usersCollection.UpdateOne(r.Context(), filter, update)
@@ -395,14 +375,24 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*mongo.Client)
 
 	username := r.URL.Query().Get("username")
-	followerID := r.URL.Query().Get("userId")
 	action := r.URL.Query().Get("action") // This could be either "follow" or "unfollow"
 
 	userCollection := db.Database("SocialFlux").Collection("users")
 
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+	followerID, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
 	// Find the user to be followed/unfollowed
 	var userToBeUpdated bson.M
-	err := userCollection.FindOne(r.Context(), bson.M{"username": username}).Decode(&userToBeUpdated)
+	err = userCollection.FindOne(r.Context(), bson.M{"username": username}).Decode(&userToBeUpdated)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -413,14 +403,8 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Find the follower user
-	followerObjectID, err := primitive.ObjectIDFromHex(followerID)
-	if err != nil {
-		http.Error(w, "Invalid follower ID", http.StatusBadRequest)
-		return
-	}
-
 	var followerUser bson.M
-	err = userCollection.FindOne(r.Context(), bson.M{"_id": followerObjectID}).Decode(&followerUser)
+	err = userCollection.FindOne(r.Context(), bson.M{"id": followerID}).Decode(&followerUser)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Follower not found", http.StatusNotFound)
@@ -437,7 +421,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the followerID is the same as the userToBeUpdated ID
-	if userToBeUpdated["_id"] == followerUser["_id"] {
+	if userToBeUpdated["id"] == followerUser["id"] {
 		http.Error(w, "My guy, you can't follow yourself! That's cheating!!", http.StatusBadRequest)
 		return
 	}
@@ -452,7 +436,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		userToBeUpdated["followers"] = bson.A{} // Update local variable to reflect change
 	}
 	if followerUser["following"] == nil {
-		_, err := userCollection.UpdateOne(r.Context(), bson.M{"_id": followerObjectID}, bson.M{"$set": bson.M{"following": bson.A{}}})
+		_, err := userCollection.UpdateOne(r.Context(), bson.M{"id": followerID}, bson.M{"$set": bson.M{"following": bson.A{}}})
 		if err != nil {
 			http.Error(w, "Failed to initialize following list", http.StatusInternalServerError)
 			return
@@ -488,12 +472,12 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		// Add follower's user ID to the user's followers list
 		followedUserUpdate = bson.M{"$addToSet": bson.M{"followers": followerID}}
 		// Add followed user's ID to the follower's following list
-		followerUserUpdate = bson.M{"$addToSet": bson.M{"following": userToBeUpdated["_id"].(primitive.ObjectID).Hex()}}
+		followerUserUpdate = bson.M{"$addToSet": bson.M{"following": userToBeUpdated["id"]}}
 	} else if action == "unfollow" {
 		// Remove follower's user ID from the user's followers list
 		followedUserUpdate = bson.M{"$pull": bson.M{"followers": followerID}}
 		// Remove followed user's ID from the follower's following list
-		followerUserUpdate = bson.M{"$pull": bson.M{"following": userToBeUpdated["_id"].(primitive.ObjectID).Hex()}}
+		followerUserUpdate = bson.M{"$pull": bson.M{"following": userToBeUpdated["id"]}}
 	} else {
 		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
@@ -508,7 +492,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update the follower user
-	followerUserFilter := bson.M{"_id": followerObjectID}
+	followerUserFilter := bson.M{"id": followerID}
 	_, err = userCollection.UpdateOne(r.Context(), followerUserFilter, followerUserUpdate)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", followerUser["username"], err), http.StatusInternalServerError)
@@ -533,16 +517,14 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*mongo.Client)
 
 	// Retrieve the userId from query parameters
-	userID := r.URL.Query().Get("userId")
-	if userID == "" {
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
 		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
-
-	// Convert the userID to a primitive.ObjectID
-	objID, err := primitive.ObjectIDFromHex(userID)
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Invalid userID provided", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
@@ -555,7 +537,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 
 	// Find the user by ID and retrieve the current value of isPrivate
 	var user bson.M
-	err = usersCollection.FindOne(ctx, bson.M{"_id": objID}).Decode(&user)
+	err = usersCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -577,7 +559,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 	update := bson.M{
 		"$set": bson.M{"isPrivate": newPrivacyStatus},
 	}
-	_, err = usersCollection.UpdateOne(ctx, bson.M{"_id": objID}, update, options.Update().SetUpsert(false))
+	_, err = usersCollection.UpdateOne(ctx, bson.M{"id": userID}, update, options.Update().SetUpsert(false))
 	if err != nil {
 		http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
 		return

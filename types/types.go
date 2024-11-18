@@ -7,20 +7,20 @@ import (
 )
 
 type Post struct {
-	ID            string             `bson:"_id" json:"_id"`
-	Title         string             `bson:"title" json:"title"`
-	Content       string             `bson:"content" json:"content"`
-	Author        primitive.ObjectID `bson:"author" json:"-"`
-	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
-	ScheduledFor  time.Time          `bson:"scheduledFor" json:"scheduledFor"`
-	Image         []string           `bson:"image" json:"image"`
-	Hearts        []string           `bson:"hearts" json:"hearts"`
-	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
-	Poll          []Poll             `bson:"poll,omitempty" json:"poll,omitempty"`
-	Comments      []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
-	Coterie       string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
-	AuthorDetails Author             `bson:"authorDetails,omitempty" json:"authorDetails,omitempty"`
+	ID            string    `bson:"_id" json:"_id"`
+	Title         string    `bson:"title" json:"title"`
+	Content       string    `bson:"content" json:"content"`
+	Author        string    `bson:"author" json:"-"`
+	CommentNumber int       `bson:"commentNumber" json:"commentNumber"`
+	TimeAgo       string    `bson:"timeAgo" json:"timeAgo"`
+	ScheduledFor  time.Time `bson:"scheduledFor" json:"scheduledFor"`
+	Image         []string  `bson:"image" json:"image"`
+	Hearts        []string  `bson:"hearts" json:"hearts"`
+	CreatedAt     time.Time `bson:"createdAt" json:"createdAt"`
+	Poll          []Poll    `bson:"poll,omitempty" json:"poll,omitempty"`
+	Comments      []Comment `bson:"comments,omitempty" json:"comments,omitempty"`
+	Coterie       string    `bson:"coterie,omitempty" json:"coterie,omitempty"`
+	AuthorDetails Author    `bson:"authorDetails,omitempty" json:"authorDetails,omitempty"`
 }
 
 type Poll struct {
@@ -39,17 +39,17 @@ type Options struct {
 }
 
 type NewPost struct {
-	ID           string             `json:"id,omitempty" bson:"_id,omitempty"`
-	Title        string             `json:"title"`
-	Content      string             `json:"content"`
-	Author       primitive.ObjectID `json:"author"`
-	Image        []string           `json:"image,omitempty"`
-	ScheduledFor time.Time          `bson:"scheduledFor" json:"scheduledFor"`
-	Coterie      string             `json:"coterie"`
-	Hearts       []string           `json:"hearts,omitempty"`
-	CreatedAt    time.Time          `json:"createdAt" bson:"createdAt"`
-	Poll         []NewPoll          `bson:"poll,omitempty" json:"poll,omitempty"`
-	Comments     []string           `json:"comments,omitempty" bson:"comments,omitempty"`
+	ID           string    `json:"id,omitempty" bson:"_id,omitempty"`
+	Title        string    `json:"title"`
+	Content      string    `json:"content"`
+	Author       string    `json:"author"`
+	Image        []string  `json:"image,omitempty"`
+	ScheduledFor time.Time `bson:"scheduledFor" json:"scheduledFor"`
+	Coterie      string    `json:"coterie"`
+	Hearts       []string  `json:"hearts,omitempty"`
+	CreatedAt    time.Time `json:"createdAt" bson:"createdAt"`
+	Poll         []NewPoll `bson:"poll,omitempty" json:"poll,omitempty"`
+	Comments     []string  `json:"comments,omitempty" bson:"comments,omitempty"`
 }
 
 type NewPoll struct {
@@ -91,14 +91,14 @@ type Author struct {
 type NewComment struct {
 	ID        primitive.ObjectID `bson:"_id" json:"_id"`
 	Content   string             `bson:"content" json:"content"`
-	Author    primitive.ObjectID `bson:"author" json:"-"`
+	Author    string             `bson:"author" json:"-"`
 	CreatedAt time.Time          `json:"createdAt"`
 }
 
 type Comment struct {
 	ID             primitive.ObjectID `bson:"_id" json:"_id"`
 	Content        string             `bson:"content" json:"content"`
-	Author         primitive.ObjectID `bson:"author" json:"-"`
+	Author         string             `bson:"author" json:"-"`
 	IsVerified     bool               `json:"isVerified"`
 	IsOrganisation bool               `json:"isOrganisation"`
 	IsModerator    bool               `json:"isModerator"`
@@ -113,45 +113,45 @@ type Comment struct {
 }
 
 type User struct {
-	ID             primitive.ObjectID `json:"_id"`
-	Username       string             `json:"username"`
-	DisplayName    string             `json:"displayname"`
-	UserID         int                `bson:"userid" json:"userid"`
-	Email          string             `bson:"email" json:"email"`
-	CreatedAt      time.Time          `bson:"createdAt" json:"createdAt"`
-	ProfilePicture string             `bson:"profilePicture" json:"profilePicture"`
-	ProfileBanner  string             `bson:"profileBanner" json:"profileBanner"`
-	Bio            string             `bson:"bio" json:"bio"`
-	IsVerified     bool               `json:"isVerified"`
-	IsOrganisation bool               `json:"isOrganisation"`
-	IsDeveloper    bool               `json:"isDeveloper"`
-	IsPartner      bool               `json:"isPartner"`
-	IsOwner        bool               `json:"isOwner"`
-	IsModerator    bool               `json:"isModerator"`
-	IsPrivate      bool               `bson:"isPrivate" json:"isPrivate"`
-	IsBanned       bool               `json:"isBanned"`
-	Session        []Session          `bson:"session" json:"session"`
-	Password       string             `bson:"password,omitempty" json:"-"`
-	Links          []string           `bson:"links,omitempty" json:"links,omitempty"`
-	Followers      []string           `bson:"followers" json:"followers"`
-	Following      []string           `bson:"following" json:"following"`
+	ID             string    `json:"id"`
+	Username       string    `json:"username"`
+	DisplayName    string    `json:"displayname"`
+	UserID         int       `bson:"userid" json:"userid"`
+	Email          string    `bson:"email" json:"email"`
+	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
+	ProfilePicture string    `bson:"profilePicture" json:"profilePicture"`
+	ProfileBanner  string    `bson:"profileBanner" json:"profileBanner"`
+	Bio            string    `bson:"bio" json:"bio"`
+	IsVerified     bool      `json:"isVerified"`
+	IsOrganisation bool      `json:"isOrganisation"`
+	IsDeveloper    bool      `json:"isDeveloper"`
+	IsPartner      bool      `json:"isPartner"`
+	IsOwner        bool      `json:"isOwner"`
+	IsModerator    bool      `json:"isModerator"`
+	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
+	IsBanned       bool      `json:"isBanned"`
+	Session        []Session `bson:"session" json:"session"`
+	Password       string    `bson:"password,omitempty" json:"-"`
+	Links          []string  `bson:"links,omitempty" json:"links,omitempty"`
+	Followers      []string  `bson:"followers" json:"followers"`
+	Following      []string  `bson:"following" json:"following"`
 }
 
 type Session struct {
-	UserID    primitive.ObjectID `bson:"user_id"`
-	SessionID string             `bson:"session_id"`
-	Device    string             `bson:"device"`
-	StartedAt time.Time          `bson:"started_at"`
-	ExpiresAt time.Time          `bson:"expires_at"`
-	Token     string             `bson:"token"`
+	UserID    string    `bson:"user_id"`
+	SessionID string    `bson:"session_id"`
+	Device    string    `bson:"device"`
+	StartedAt time.Time `bson:"started_at"`
+	ExpiresAt time.Time `bson:"expires_at"`
+	Token     string    `bson:"token"`
 }
 
 type Coterie struct {
-	ID             primitive.ObjectID         `bson:"_id" json:"_id"`
+	ID             string                     `bson:"id" json:"id"`
 	Name           string                     `bson:"name" json:"name"`
 	Description    string                     `bson:"description" json:"description"`
 	Members        []string                   `bson:"members" json:"members"`
-	Owner          primitive.ObjectID         `bson:"owner" json:"owner"`
+	Owner          string                     `bson:"owner" json:"owner"`
 	OwnerUsername  string                     `json:"ownerUsername,omitempty"`
 	IsOrganisation bool                       `json:"isOrganisation"`
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
@@ -187,13 +187,13 @@ type Message struct {
 }
 
 type BlogPost struct {
-	ID       string             `bson:"id,omitempty" json:"id"`
-	Slug     string             `json:"slug"`
-	Title    string             `json:"title"`
-	Date     string             `json:"date"`
-	AuthorID primitive.ObjectID `json:"authorId"`
-	Overview string             `json:"overview"`
-	Content  []PostEntry        `json:"content"`
+	ID       string      `bson:"id,omitempty" json:"id"`
+	Slug     string      `json:"slug"`
+	Title    string      `json:"title"`
+	Date     string      `json:"date"`
+	AuthorID string      `json:"authorId"`
+	Overview string      `json:"overview"`
+	Content  []PostEntry `json:"content"`
 }
 
 type PostEntry struct {

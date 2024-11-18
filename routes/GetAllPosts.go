@@ -9,9 +9,9 @@ import (
 
 	"netsocial/types"
 
+	"github.com/google/uuid"
 	"github.com/karlseguin/ccache/v2"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -80,19 +80,19 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	for i, post := range posts {
 		var author types.Author
 		// Check if the author is cached
-		cachedAuthor := userCache.Get(post.Author.Hex())
+		cachedAuthor := userCache.Get(post.Author)
 		if cachedAuthor != nil {
 			author = cachedAuthor.Value().(types.Author)
 		} else {
 			// Query the usersCollection to check if the author exists
-			err := usersCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+			err := usersCollection.FindOne(ctx, bson.M{"id": post.Author}).Decode(&author)
 			if err != nil {
 				// Handle error (author not found)
-				posts[i].Author = primitive.ObjectID{} // or set to default if necessary
+				posts[i].Author = uuid.UUID{}.String() // or set to default if necessary
 				continue
 			}
 			// Cache the author with a 3-minute expiration
-			userCache.Set(post.Author.Hex(), author, time.Minute*3)
+			userCache.Set(post.Author, author, time.Minute*3)
 		}
 
 		// Check if the author's account is private
@@ -129,24 +129,24 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		// Prepare hearts details
 		var heartsDetails []string
 		for _, heart := range post.Hearts {
-			userID, err := primitive.ObjectIDFromHex(heart)
+			userID, err := uuid.Parse(heart)
 			if err != nil {
 				heartsDetails = append(heartsDetails, "Unknown")
 				continue
 			}
 
 			// Check if the username is already cached
-			cachedHeartAuthor := userCache.Get(userID.Hex())
+			cachedHeartAuthor := userCache.Get(userID.String())
 			if cachedHeartAuthor == nil {
 				var heartAuthor types.Author
-				err := usersCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&heartAuthor)
+				err := usersCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&heartAuthor)
 				if err != nil {
 					heartsDetails = append(heartsDetails, "Unknown")
 					continue
 				}
 				heartsDetails = append(heartsDetails, heartAuthor.Username)
 				// Cache the entire author struct with a 3-minute expiration
-				userCache.Set(userID.Hex(), heartAuthor, time.Minute*3)
+				userCache.Set(userID.String(), heartAuthor, time.Minute*3)
 			} else {
 				// Assert the cached value to the correct type (Author)
 				author := cachedHeartAuthor.Value().(types.Author)

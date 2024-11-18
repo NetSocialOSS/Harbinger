@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 
@@ -18,12 +18,12 @@ import (
 	"netsocial/types"
 )
 
-func getUsername(userCollection *mongo.Collection, id primitive.ObjectID, userIDToUsername map[primitive.ObjectID]string) (string, error) {
+func getUsername(userCollection *mongo.Collection, id uuid.UUID, userIDToUsername map[uuid.UUID]string) (string, error) {
 	if username, found := userIDToUsername[id]; found {
 		return username, nil
 	}
 	var u types.User
-	err := userCollection.FindOne(context.Background(), bson.M{"_id": id}).Decode(&u)
+	err := userCollection.FindOne(context.Background(), bson.M{"id": id.String()}).Decode(&u)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return "Unknown User", nil
@@ -57,18 +57,18 @@ func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userIDToUsername := make(map[primitive.ObjectID]string)
+	userIDToUsername := make(map[uuid.UUID]string)
 	var result []map[string]interface{}
 
 	for _, coterie := range coteries {
 		var memberUsernames []string
 		for _, memberID := range coterie.Members {
-			memberObjectID, err := primitive.ObjectIDFromHex(memberID)
+			memberUUID, err := uuid.Parse(memberID)
 			if err != nil {
 				memberUsernames = append(memberUsernames, "Invalid ID")
 				continue
 			}
-			memberUsername, err := getUsername(userCollection, memberObjectID, userIDToUsername)
+			memberUsername, err := getUsername(userCollection, memberUUID, userIDToUsername)
 			if err != nil {
 				memberUsernames = append(memberUsernames, "Unknown User")
 				continue
@@ -129,10 +129,15 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userIDToDetails := make(map[primitive.ObjectID]map[string]string)
+	userIDToDetails := make(map[uuid.UUID]map[string]string)
 
 	// Get owner details
-	ownerDetails, err := getUserDetails(userCollection, coterie.Owner, userIDToDetails)
+	ownerUUID, err := uuid.Parse(coterie.Owner)
+	if err != nil {
+		http.Error(w, "Invalid owner ID", http.StatusInternalServerError)
+		return
+	}
+	ownerDetails, err := getUserDetails(userCollection, ownerUUID, userIDToDetails)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -141,7 +146,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	// Get members' details
 	var memberDetails []map[string]interface{}
 	for _, memberID := range coterie.Members {
-		memberObjectID, err := primitive.ObjectIDFromHex(memberID)
+		memberUUID, err := uuid.Parse(memberID)
 		if err != nil {
 			memberDetails = append(memberDetails, map[string]interface{}{
 				"username":       "Invalid ID",
@@ -149,7 +154,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
-		details, err := getUserDetails(userCollection, memberObjectID, userIDToDetails)
+		details, err := getUserDetails(userCollection, memberUUID, userIDToDetails)
 		if err != nil {
 			memberDetails = append(memberDetails, map[string]interface{}{
 				"username":       "Unknown User",
@@ -220,7 +225,12 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			}
 
 			var author types.User
-			err := userCollection.FindOne(ctx, bson.M{"_id": post.Author}).Decode(&author)
+			authorUUID, err := uuid.Parse(post.Author)
+			if err != nil {
+				http.Error(w, "Invalid author ID", http.StatusInternalServerError)
+				return
+			}
+			err = userCollection.FindOne(ctx, bson.M{"id": authorUUID.String()}).Decode(&author)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -228,14 +238,14 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 
 			var heartsDetails []map[string]interface{}
 			for _, heartID := range post.Hearts {
-				heartObjectID, err := primitive.ObjectIDFromHex(heartID)
+				heartUUID, err := uuid.Parse(heartID)
 				if err != nil {
 					heartsDetails = append(heartsDetails, map[string]interface{}{
 						"username": "Invalid ID",
 					})
 					continue
 				}
-				details, err := getUserDetails(userCollection, heartObjectID, userIDToDetails)
+				details, err := getUserDetails(userCollection, heartUUID, userIDToDetails)
 				if err != nil {
 					heartsDetails = append(heartsDetails, map[string]interface{}{
 						"username": "Unknown User",
@@ -298,7 +308,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(result)
 }
 
-func getUserDetails(userCollection *mongo.Collection, userID primitive.ObjectID, cache map[primitive.ObjectID]map[string]string) (map[string]interface{}, error) {
+func getUserDetails(userCollection *mongo.Collection, userID uuid.UUID, cache map[uuid.UUID]map[string]string) (map[string]interface{}, error) {
 	if userDetails, ok := cache[userID]; ok {
 		return map[string]interface{}{
 			"username":       userDetails["username"],
@@ -307,7 +317,7 @@ func getUserDetails(userCollection *mongo.Collection, userID primitive.ObjectID,
 	}
 
 	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{"_id": userID}).Decode(&user)
+	err := userCollection.FindOne(context.TODO(), bson.M{"id": userID.String()}).Decode(&user)
 	if err != nil {
 		return nil, err
 	}
@@ -332,21 +342,27 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	title := r.URL.Query().Get("name")
-	owner := r.URL.Query().Get("owner")
+	encryptedowner := r.Header.Get("X-userID")
+
+	owner, err := middlewares.DecryptAES(encryptedowner)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	if title == "" {
 		http.Error(w, "Coterie name cannot be blank", http.StatusBadRequest)
 		return
 	}
 
-	ownerObjectID, err := primitive.ObjectIDFromHex(owner)
+	ownerUUID, err := uuid.Parse(owner)
 	if err != nil {
 		http.Error(w, "Invalid id of the owner", http.StatusBadRequest)
 		return
 	}
 
 	var user types.User
-	err = usersCollection.FindOne(ctx, bson.M{"_id": ownerObjectID}).Decode(&user)
+	err = usersCollection.FindOne(ctx, bson.M{"id": ownerUUID.String()}).Decode(&user)
 	if err == mongo.ErrNoDocuments {
 		http.Error(w, "Owner not found", http.StatusNotFound)
 		return
@@ -371,11 +387,11 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newCoterie := bson.M{
-		"_id":         primitive.NewObjectID(),
+		"id":          uuid.New().String(),
 		"name":        title,
 		"description": "",
-		"members":     []string{ownerObjectID.Hex()},
-		"owner":       ownerObjectID,
+		"members":     []string{ownerUUID.String()},
+		"owner":       ownerUUID.String(),
 		"banner":      "",
 		"avatar":      "",
 		"createdAt":   time.Now(),
@@ -388,11 +404,11 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"_id":         newCoterie["_id"].(primitive.ObjectID).Hex(),
+		"id":          newCoterie["id"],
 		"name":        newCoterie["name"],
 		"description": newCoterie["description"],
-		"members":     []string{newCoterie["owner"].(primitive.ObjectID).Hex()},
-		"owner":       bson.M{"$oid": newCoterie["owner"].(primitive.ObjectID).Hex()},
+		"members":     newCoterie["members"],
+		"owner":       newCoterie["owner"],
 		"banner":      newCoterie["banner"],
 		"avatar":      newCoterie["avatar"],
 		"createdAt":   newCoterie["createdAt"],
@@ -402,7 +418,7 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-func JoinCoterie(w http.ResponseWriter, r *http.Request) {
+func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*mongo.Client)
 
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
@@ -410,17 +426,25 @@ func JoinCoterie(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	coterieName := r.URL.Query().Get("name")
-	joinerID := r.URL.Query().Get("userID")
+	coterieName := r.Header.Get("X-name")
+	encryptedUserID := r.Header.Get("X-userID")
+	action := r.Header.Get("X-action")
 
-	joinerObjectID, err := primitive.ObjectIDFromHex(joinerID)
+	// Decrypt and parse the user ID
+	userID, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
+
+	userUUID, err := uuid.Parse(userID)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
-	var joiner types.User
-	err = userCollection.FindOne(ctx, bson.M{"_id": joinerObjectID}).Decode(&joiner)
+	var user types.User
+	err = userCollection.FindOne(ctx, bson.M{"id": userUUID.String()}).Decode(&user)
 	if err == mongo.ErrNoDocuments {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -429,11 +453,13 @@ func JoinCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if joiner.IsBanned {
-		http.Error(w, "Hey there, you are banned from using NetSocial's services.", http.StatusForbidden)
+	// Check if user is banned
+	if user.IsBanned {
+		http.Error(w, "You are banned from using NetSocial's services.", http.StatusForbidden)
 		return
 	}
 
+	// Find coterie by name
 	var coterie types.Coterie
 	err = coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": coterieName, "$options": "i"}}).Decode(&coterie)
 	if err != nil {
@@ -445,114 +471,73 @@ func JoinCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for _, memberID := range coterie.Members {
-		if memberID == joinerID {
-			http.Error(w, "User is already a member of the coterie", http.StatusBadRequest)
+	switch action {
+	case "join":
+		// Check if user is already a member
+		for _, memberID := range coterie.Members {
+			if memberID == userID {
+				http.Error(w, "User is already a member of the coterie", http.StatusBadRequest)
+				return
+			}
+		}
+
+		// Check if user is banned from the coterie
+		for _, bannedID := range coterie.BannedMembers {
+			if bannedID == userID {
+				http.Error(w, "You are banned from joining this coterie", http.StatusForbidden)
+				return
+			}
+		}
+
+		// Add user to the coterie
+		_, err = coterieCollection.UpdateOne(
+			ctx,
+			bson.M{"id": coterie.ID},
+			bson.M{"$addToSet": bson.M{"members": userID}},
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-	}
 
-	for _, bannedID := range coterie.BannedMembers {
-		if bannedID == joinerID {
-			http.Error(w, "You are banned from joining this coterie", http.StatusForbidden)
+		response := map[string]interface{}{
+			"message": fmt.Sprintf("You have successfully joined '%s'", coterie.Name),
+		}
+		json.NewEncoder(w).Encode(response)
+
+	case "leave":
+		// Check if the user is a member
+		memberExists := false
+		for _, memberID := range coterie.Members {
+			if memberID == userID {
+				memberExists = true
+				break
+			}
+		}
+		if !memberExists {
+			http.Error(w, "User is not a member of the coterie", http.StatusBadRequest)
 			return
 		}
-	}
 
-	coterie.Members = append(coterie.Members, joinerID)
-
-	_, err = coterieCollection.UpdateOne(
-		ctx,
-		bson.M{"_id": coterie.ID},
-		bson.M{"$set": bson.M{"members": coterie.Members}},
-	)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]interface{}{
-		"_id":          coterie.ID.Hex(),
-		"name":         coterie.Name,
-		"description":  coterie.Description,
-		"message":      fmt.Sprintf("You have successfully joined '%s'", coterie.Name),
-		"TotalMembers": len(coterie.Members),
-	}
-
-	json.NewEncoder(w).Encode(response)
-}
-
-func LeaveCoterie(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-
-	coterieCollection := db.Database("SocialFlux").Collection("coterie")
-	userCollection := db.Database("SocialFlux").Collection("users")
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	coterieName := r.URL.Query().Get("name")
-	leaverID := r.URL.Query().Get("userID")
-
-	leaverObjectID, err := primitive.ObjectIDFromHex(leaverID)
-	if err != nil {
-		http.Error(w, "Invalid leaver ID", http.StatusBadRequest)
-		return
-	}
-
-	var leaver bson.M
-	err = userCollection.FindOne(ctx, bson.M{"_id": leaverObjectID}).Decode(&leaver)
-	if err == mongo.ErrNoDocuments {
-		http.Error(w, "Leaver not found", http.StatusNotFound)
-		return
-	} else if err != nil {
-		http.Error(w, "Error checking leaver existence: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	var coterie types.Coterie
-	err = coterieCollection.FindOne(ctx, bson.M{"name": bson.M{"$regex": coterieName, "$options": "i"}}).Decode(&coterie)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			http.Error(w, "Coterie not found", http.StatusNotFound)
+		// Remove user from coterie members
+		_, err = coterieCollection.UpdateOne(
+			ctx,
+			bson.M{"id": coterie.ID},
+			bson.M{"$pull": bson.M{"members": userID}}, // Remove user ID
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
 
-	var newMembers []string
-	found := false
-	for _, memberID := range coterie.Members {
-		if memberID != leaverID {
-			newMembers = append(newMembers, memberID)
-		} else {
-			found = true
+		response := map[string]interface{}{
+			"message": fmt.Sprintf("You have successfully left '%s'", coterie.Name),
 		}
-	}
+		json.NewEncoder(w).Encode(response)
 
-	if !found {
-		http.Error(w, "Leaver is not a member of the coterie", http.StatusBadRequest)
-		return
+	default:
+		http.Error(w, "Invalid action. Use 'join' or 'leave'", http.StatusBadRequest)
 	}
-
-	_, err = coterieCollection.UpdateOne(
-		ctx,
-		bson.M{"_id": coterie.ID},
-		bson.M{"$set": bson.M{"members": newMembers}},
-	)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]interface{}{
-		"_id":         coterie.ID.Hex(),
-		"name":        coterie.Name,
-		"description": coterie.Description,
-		"message":     fmt.Sprintf("You have successfully left '%s'", coterie.Name),
-	}
-
-	json.NewEncoder(w).Encode(response)
 }
 
 func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
@@ -561,7 +546,14 @@ func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
 
 	name := r.URL.Query().Get("name")
 	limitStr := r.URL.Query().Get("limitnumber")
-	ownerIDStr := r.URL.Query().Get("OwnerID")
+	encryptedUserID := r.Header.Get("X-userID")
+
+	// Decrypt and parse the user ID
+	ownerIDStr, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
 
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 || limit > 9 {
@@ -569,7 +561,7 @@ func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ownerID, err := primitive.ObjectIDFromHex(ownerIDStr)
+	ownerID, err := uuid.Parse(ownerIDStr)
 	if err != nil {
 		http.Error(w, "Invalid OwnerID.", http.StatusBadRequest)
 		return
@@ -582,12 +574,12 @@ func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if coterie.Owner != ownerID {
+	if coterie.Owner != ownerID.String() {
 		http.Error(w, "Unauthorized. Only the coterie owner can update the warning limit.", http.StatusUnauthorized)
 		return
 	}
 
-	filter := bson.M{"name": name, "owner": ownerID}
+	filter := bson.M{"name": name, "owner": ownerID.String()}
 	update := bson.M{"$set": bson.M{"warningLimit": limit}}
 
 	_, err = coterieCollection.UpdateOne(context.Background(), filter, update)
@@ -609,18 +601,25 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 	newName := r.URL.Query().Get("newName")
 	coterieName := r.URL.Query().Get("name")
 	newDescription := r.URL.Query().Get("newDescription")
-	ownerID := r.URL.Query().Get("ownerID")
+	encryptedUserID := r.Header.Get("X-userID")
 	newBanner := r.URL.Query().Get("newBanner")
 	newAvatar := r.URL.Query().Get("newAvatar")
 	isChatAllowedStr := r.URL.Query().Get("isChatAllowed")
 
-	ownerObjectID, err := primitive.ObjectIDFromHex(ownerID)
+	// Decrypt and parse the user ID
+	ownerID, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
+
+	ownerUUID, err := uuid.Parse(ownerID)
 	if err != nil {
 		http.Error(w, "Invalid owner ID", http.StatusBadRequest)
 		return
 	}
 
-	filter := bson.M{"name": coterieName, "owner": ownerObjectID}
+	filter := bson.M{"name": coterieName, "owner": ownerUUID.String()}
 
 	updateFields := bson.M{}
 	if newName != "" {
@@ -674,15 +673,22 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 
 	name := r.URL.Query().Get("CoterieName")
 	membername := r.URL.Query().Get("username")
-	modIDStr := r.URL.Query().Get("modID")
+	encryptedUserID := r.Header.Get("X-userID")
 	reason := r.URL.Query().Get("reason")
+
+	// Decrypt and parse the user ID
+	modIDStr, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
 
 	if name == "" || membername == "" || modIDStr == "" || reason == "" {
 		http.Error(w, "All query parameters are required", http.StatusBadRequest)
 		return
 	}
 
-	modID, err := primitive.ObjectIDFromHex(modIDStr)
+	modID, err := uuid.Parse(modIDStr)
 	if err != nil {
 		http.Error(w, "Invalid modID format", http.StatusBadRequest)
 		return
@@ -696,13 +702,13 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var mod bson.M
-	err = userCollection.FindOne(context.TODO(), bson.M{"_id": modID}).Decode(&mod)
+	err = userCollection.FindOne(context.TODO(), bson.M{"id": modID.String()}).Decode(&mod)
 	if err != nil {
 		http.Error(w, "Mod not found", http.StatusNotFound)
 		return
 	}
 
-	memberID := member["_id"].(primitive.ObjectID).Hex()
+	memberID := member["id"].(string)
 
 	var coterie types.Coterie
 	err = coterieCollection.FindOne(context.TODO(), bson.M{"name": name}).Decode(&coterie)
@@ -812,17 +818,24 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	coterieName := r.FormValue("CoterieName")
 	role := r.FormValue("role")
 	memberName := r.FormValue("username")
-	promoterIDStr := r.FormValue("modID")
+	encryptedUserID := r.Header.Get("X-userID")
 	action := r.FormValue("action")
 
-	promoterID, err := primitive.ObjectIDFromHex(promoterIDStr)
+	// Decrypt and parse the user ID
+	promoterIDStr, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
+
+	promoterID, err := uuid.Parse(promoterIDStr)
 	if err != nil {
 		http.Error(w, "Invalid PromoterID", http.StatusBadRequest)
 		return
 	}
 
 	var member struct {
-		ID primitive.ObjectID `bson:"_id"`
+		ID string `bson:"id"`
 	}
 	err = userCollection.FindOne(context.TODO(), bson.M{"username": memberName}).Decode(&member)
 	if err != nil {
@@ -837,7 +850,7 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if coterie.Owner != promoterID {
+	if coterie.Owner != promoterID.String() {
 		http.Error(w, "Only the owner can promote or demote members", http.StatusUnauthorized)
 		return
 	}
@@ -856,13 +869,13 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	if action == "promote" {
 		update = bson.M{
 			"$addToSet": bson.M{
-				"roles." + role: member.ID.Hex(),
+				"roles." + role: member.ID,
 			},
 		}
 	} else {
 		update = bson.M{
 			"$pull": bson.M{
-				"roles." + role: member.ID.Hex(),
+				"roles." + role: member.ID,
 			},
 		}
 	}
@@ -892,9 +905,16 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 	// Parse request parameters
 	coterieName := r.URL.Query().Get("coterie")
 	postIDStr := r.URL.Query().Get("postID")
-	modIDStr := r.URL.Query().Get("modID")
+	encryptedUserID := r.Header.Get("X-userID")
 
-	modID, err := primitive.ObjectIDFromHex(modIDStr)
+	// Decrypt and parse the user ID
+	modIDStr, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
+
+	modID, err := uuid.Parse(modIDStr)
 	if err != nil {
 		http.Error(w, "Invalid moderator ID", http.StatusBadRequest)
 		return
@@ -914,7 +934,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch post details
 	var post types.Post
-	err = postCollection.FindOne(context.Background(), bson.M{"_id": postIDStr}).Decode(&post)
+	err = postCollection.FindOne(context.Background(), bson.M{"id": postIDStr}).Decode(&post)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Post not found", http.StatusNotFound)
@@ -932,7 +952,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch user details
 	var mod types.User
-	err = userCollection.FindOne(context.Background(), bson.M{"_id": modID}).Decode(&mod)
+	err = userCollection.FindOne(context.Background(), bson.M{"id": modID.String()}).Decode(&mod)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Moderator not found", http.StatusNotFound)
@@ -973,7 +993,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove the post from the posts collection
-	result, err := postCollection.DeleteOne(context.Background(), bson.M{"_id": postIDStr})
+	result, err := postCollection.DeleteOne(context.Background(), bson.M{"id": postIDStr})
 	if err != nil {
 		http.Error(w, "Error removing post: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1004,16 +1024,23 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	coterieName := r.URL.Query().Get("CoterieName")
 	username := r.URL.Query().Get("username")
-	modID := r.URL.Query().Get("modID")
+	encryptedUserID := r.Header.Get("X-userID")
+
+	// Decrypt and parse the user ID
+	modID, err := middlewares.DecryptAES(encryptedUserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		return
+	}
 
 	// Fetch moderator details
 	var moderator types.User
-	moderatorObjectID, err := primitive.ObjectIDFromHex(modID)
+	moderatorUUID, err := uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, "Invalid moderator ID", http.StatusBadRequest)
 		return
 	}
-	err = userCollection.FindOne(ctx, bson.M{"_id": moderatorObjectID}).Decode(&moderator)
+	err = userCollection.FindOne(ctx, bson.M{"id": moderatorUUID.String()}).Decode(&moderator)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Moderator not found", http.StatusNotFound)
@@ -1050,7 +1077,7 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 	// Check if user is a member of the coterie
 	var isMember bool
 	for _, memberID := range coterie.Members {
-		if memberID == user.ID.Hex() {
+		if memberID == user.ID {
 			isMember = true
 			break
 		}
@@ -1063,10 +1090,10 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 	// Add user to bannedMembers array in coterie document
 	update := bson.M{
 		"$push": bson.M{
-			"bannedMembers": user.ID.Hex(),
+			"bannedMembers": user.ID,
 		},
 	}
-	_, err = coterieCollection.UpdateOne(ctx, bson.M{"_id": coterie.ID}, update)
+	_, err = coterieCollection.UpdateOne(ctx, bson.M{"id": coterie.ID}, update)
 	if err != nil {
 		http.Error(w, "Error updating coterie: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1078,7 +1105,7 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 			"isBanned": true,
 		},
 	}
-	_, err = userCollection.UpdateOne(ctx, bson.M{"_id": user.ID}, updateUser)
+	_, err = userCollection.UpdateOne(ctx, bson.M{"id": user.ID}, updateUser)
 	if err != nil {
 		http.Error(w, "Error updating user: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -1097,30 +1124,29 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve the parameter from the request
-	param := chi.URLParam(r, "userParam")
+	// Retrieve the username from the URL parameter
+	username := chi.URLParam(r, "userParam")
 
-	var userID primitive.ObjectID
+	// Retrieve the user ID from the request header
+	userIDHeader := r.Header.Get("X-userID")
+
+	var userID string
 	var err error
 
-	// Check if the parameter is a valid ObjectID
-	if primitive.IsValidObjectID(param) {
-		userID, err = primitive.ObjectIDFromHex(param)
-		if err != nil {
-			http.Error(w, "Invalid user ID", http.StatusBadRequest)
-			return
-		}
+	// If the user ID is passed in the header, use it
+	if userIDHeader != "" {
+		userID = userIDHeader
 	} else {
-		// Treat the parameter as a username and fetch the user ID
+		// Otherwise, treat the parameter as a username and fetch the user ID
 		userCollection := db.Database("SocialFlux").Collection("users")
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		var user struct {
-			ID primitive.ObjectID `bson:"_id"`
+			ID string `bson:"id"`
 		}
 
-		err = userCollection.FindOne(ctx, bson.M{"username": param}).Decode(&user)
+		err := userCollection.FindOne(ctx, bson.M{"username": username}).Decode(&user)
 		if err != nil {
 			if err == mongo.ErrNoDocuments {
 				http.Error(w, "User not found", http.StatusNotFound)
@@ -1138,7 +1164,7 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// Find coteries where the user is a member
-	cursor, err := coterieCollection.Find(ctx, bson.M{"members": userID.Hex()})
+	cursor, err := coterieCollection.Find(ctx, bson.M{"members": userID})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1156,8 +1182,8 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 
 		// Determine user roles in the coterie
 		isOwner := coterie.Owner == userID
-		isAdmin := contains(coterie.Roles["admin"], userID.Hex())
-		isModerator := contains(coterie.Roles["moderator"], userID.Hex())
+		isAdmin := contains(coterie.Roles["admin"], userID)
+		isModerator := contains(coterie.Roles["moderator"], userID)
 
 		coteries = append(coteries, map[string]interface{}{
 			"name":           coterie.Name,
@@ -1196,13 +1222,12 @@ func contains(slice []string, item string) bool {
 
 func CoterieRoutes(r chi.Router) {
 	r.Get("/coterie/@all", GetAllCoterie)
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/leave", (middlewares.DiscordErrorReport(http.HandlerFunc(LeaveCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/membership", (middlewares.DiscordErrorReport(http.HandlerFunc(CoterieMembership)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/set-warning-limit", (middlewares.DiscordErrorReport(http.HandlerFunc(SetWarningLimit)).ServeHTTP))
 	r.Get("/coterie/{name}", GetCoterieByName)
 	r.Get("/user/{userParam}/coteries", GetCoteriesByUserID)
 	r.With(RateLimit(5, 5*time.Minute)).Delete("/coterie/remove-post", (middlewares.DiscordErrorReport(http.HandlerFunc(RemovePostFromCoterie)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/update", (middlewares.DiscordErrorReport(http.HandlerFunc(UpdateCoterie)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/join", (middlewares.DiscordErrorReport(http.HandlerFunc(JoinCoterie)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/promote", (middlewares.DiscordErrorReport(http.HandlerFunc(PromoteMember)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/ban", (middlewares.DiscordErrorReport(http.HandlerFunc(BanUser)).ServeHTTP))
 	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/warn", (middlewares.DiscordErrorReport(http.HandlerFunc(WarnMember)).ServeHTTP))

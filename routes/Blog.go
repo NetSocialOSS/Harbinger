@@ -13,7 +13,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
@@ -44,7 +43,8 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 
 	for _, blog := range blogs {
 		var user types.User
-		err := userCollection.FindOne(context.Background(), bson.M{"_id": blog.AuthorID}).Decode(&user)
+		// Assuming blog.AuthorID is a UUID string now, we query using that directly.
+		err := userCollection.FindOne(context.Background(), bson.M{"id": blog.AuthorID}).Decode(&user)
 		if err == mongo.ErrNoDocuments {
 			log.Println("Warning: Author not found for blog post ID:", blog.ID)
 			continue
@@ -100,16 +100,18 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := primitive.ObjectIDFromHex(UserID)
+	// Since UserID is now a UUID string, we don't need ObjectIDFromHex
+	_, err := uuid.Parse(UserID)
 	if err != nil {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
 		return
 	}
 
 	userCollection := db.Database("SocialFlux").Collection("users")
 	var user types.User
 
-	err = userCollection.FindOne(context.Background(), bson.M{"_id": userID}).Decode(&user)
+	// Query the users collection using UUID string
+	err = userCollection.FindOne(context.Background(), bson.M{"id": UserID}).Decode(&user)
 	if err == mongo.ErrNoDocuments || !(user.IsDeveloper || user.IsOwner) {
 		http.Error(w, "User not authorized to add posts", http.StatusForbidden)
 		return
@@ -124,7 +126,7 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		Slug:     generateSlug(Title),
 		Title:    Title,
 		Date:     time.Now().Format("January 02, 2006"),
-		AuthorID: user.ID,
+		AuthorID: UserID,
 		Overview: Overview,
 		Content:  Content,
 	}
