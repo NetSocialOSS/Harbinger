@@ -22,13 +22,19 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Header.Get("username")
-	action := r.Header.Get("action")
-	badge := r.Header.Get("badge")
-	modID := r.Header.Get("modid")
+	username := r.Header.Get("X-username")
+	action := r.Header.Get("X-action")
+	badge := r.Header.Get("X-badge")
+	encryptedid := r.Header.Get("X-modid")
+
+	modID, err := middlewares.DecryptAES(encryptedid)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Validate modID
-	_, err := uuid.Parse(modID)
+	_, err = uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -108,11 +114,17 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postID := r.Header.Get("postId")
-	modID := r.Header.Get("modid")
+	postID := r.Header.Get("X-postId")
+	encryptedid := r.Header.Get("X-modid")
+
+	modID, err := middlewares.DecryptAES(encryptedid)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Validate modID
-	_, err := uuid.Parse(modID)
+	_, err = uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -160,11 +172,17 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coterieName := r.Header.Get("name")
-	modID := r.Header.Get("modid")
+	coterieName := r.Header.Get("X-name")
+	encryptedid := r.Header.Get("X-modid")
+
+	modID, err := middlewares.DecryptAES(encryptedid)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Validate modID
-	_, err := uuid.Parse(modID)
+	_, err = uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return
@@ -212,12 +230,18 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	username := r.Header.Get("username")
-	action := r.Header.Get("action")
-	modID := r.Header.Get("modid")
+	username := r.Header.Get("X-username")
+	action := r.Header.Get("X-action")
+	encryptedid := r.Header.Get("X-modid")
+
+	modID, err := middlewares.DecryptAES(encryptedid)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Validate modID
-	_, err := uuid.Parse(modID)
+	_, err = uuid.Parse(modID)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
 		return

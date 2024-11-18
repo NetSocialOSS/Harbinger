@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"netsocial/middlewares"
 	"netsocial/types"
 
 	"github.com/go-chi/chi/v5"
@@ -89,9 +90,15 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	UserID := r.URL.Query().Get("userId")
+	encryptedid := r.Header.Get("X-userId")
 	Title := r.URL.Query().Get("title")
 	Overview := r.URL.Query().Get("overview")
+
+	UserID, err := middlewares.DecryptAES(encryptedid)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	var Content []types.PostEntry
 	contentStr := r.URL.Query().Get("content")
@@ -101,7 +108,7 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Since UserID is now a UUID string, we don't need ObjectIDFromHex
-	_, err := uuid.Parse(UserID)
+	_, err = uuid.Parse(UserID)
 	if err != nil {
 		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
 		return
