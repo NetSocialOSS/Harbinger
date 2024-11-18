@@ -341,7 +341,7 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	title := r.URL.Query().Get("name")
+	title := r.Header.Get("X-name")
 	encryptedowner := r.Header.Get("X-userID")
 
 	owner, err := middlewares.DecryptAES(encryptedowner)
