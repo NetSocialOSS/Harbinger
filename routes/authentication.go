@@ -650,7 +650,13 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
 	// Parse query parameters
 	sessionIDStr := r.Header.Get("X-sessionID")
-	userIDStr := r.Header.Get("X-userID")
+	encrypteduserID := r.Header.Get("X-userID")
+
+	userIDStr, err := middlewares.DecryptAES(encrypteduserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
 
 	// Validate the user_id (UUID)
 	userID, err := uuid.Parse(userIDStr)
