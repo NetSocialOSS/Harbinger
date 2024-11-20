@@ -52,7 +52,7 @@ func main() {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.CleanPath)
-	//r.Use(middleware.Logger)
+	r.Use(middleware.Logger)
 	r.Use(middleware.AllowContentType("application/json"))
 
 	// Middleware: Database Connection

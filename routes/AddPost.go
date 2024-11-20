@@ -162,10 +162,11 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 				"votes": []string{},
 			})
 		}
-
+		optionID := primitive.NewObjectID()
 		// Construct the poll object
 		poll = bson.M{
-			"_id":        postID,
+
+			"_id":        optionID,
 			"options":    pollOptions,
 			"createdAt":  time.Now(),
 			"expiration": time.Time{}, // Default to zero value if not specified
