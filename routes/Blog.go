@@ -44,7 +44,6 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 
 	for _, blog := range blogs {
 		var user types.User
-		// Assuming blog.AuthorID is a UUID string now, we query using that directly.
 		err := userCollection.FindOne(context.Background(), bson.M{"id": blog.AuthorID}).Decode(&user)
 		if err == mongo.ErrNoDocuments {
 			log.Println("Warning: Author not found for blog post ID:", blog.ID)
