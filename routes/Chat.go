@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -81,8 +81,8 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate and convert user ID
-	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	// Validate user ID (UUID)
+	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
 		return
@@ -93,7 +93,7 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Verify user exists
 	var user types.User
-	err = userCollection.FindOne(ctx, bson.M{"_id": userID}).Decode(&user)
+	err = userCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
@@ -139,7 +139,7 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 	// Create the message object
 	message := types.Message{
 		Coterie:   coterieName,
-		UserID:    userID,
+		UserID:    userID.String(),
 		Content:   encryptedContent,
 		CreatedAt: time.Now(),
 	}
@@ -176,8 +176,8 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate and convert user ID
-	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	// Validate user ID (UUID)
+	userID, err := uuid.Parse(userIDStr)
 	if err != nil {
 		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
 		return
@@ -250,7 +250,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 
 		// Get the user who posted the message
 		var messageUser types.User
-		err = userCollection.FindOne(ctx, bson.M{"_id": message.UserID}).Decode(&messageUser)
+		err = userCollection.FindOne(ctx, bson.M{"id": message.UserID}).Decode(&messageUser)
 		if err != nil {
 			http.Error(w, `{"error": "Error fetching user data: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
