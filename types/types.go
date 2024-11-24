@@ -181,7 +181,7 @@ type WarningDetail struct {
 type Message struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	Coterie   string             `bson:"coterie" json:"coterie"`
-	UserID    primitive.ObjectID `bson:"userID" json:"userID"`
+	UserID    string             `bson:"userID" json:"userID"`
 	Content   string             `bson:"content" json:"content"`
 	CreatedAt time.Time          `bson:"createdAt" json:"createdAt"`
 }
@@ -201,6 +201,7 @@ type PostEntry struct {
 }
 
 type Partner struct {
+	ID     string `bson:"id,omitempty" json:"id"`
 	Banner string `json:"banner,omitempty" bson:"banner,omitempty"`
 	Logo   string `json:"logo,omitempty" bson:"logo,omitempty"`
 	Title  string `json:"title,omitempty" bson:"title,omitempty"`
