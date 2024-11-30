@@ -58,7 +58,18 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	scheduledForStr := r.Header.Get("X-scheduledFor")
 	optionsStr := r.Header.Get("X-options")
 	expirationStr := r.Header.Get("X-expiration")
+	indexingStr := r.Header.Get("X-indexing")
+	indexing := false
 
+	if indexingStr != "" {
+		// Validate the X-indexing header, must be "true" or "false"
+		if indexingStr == "true" {
+			indexing = true
+		} else if indexingStr != "true" {
+			http.Error(w, "Invalid value for X-indexing. It must be 'true' or 'false'", http.StatusBadRequest)
+			return
+		}
+	}
 	userId, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
@@ -190,6 +201,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		"content":   content,
 		"author":    userId,
 		"hearts":    []string{},
+		"isIndexed": indexing,
 		"createdAt": time.Now(),
 	}
 

@@ -108,7 +108,6 @@ func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
 
 func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*mongo.Client)
-
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 	userCollection := db.Database("SocialFlux").Collection("users")
 	postsCollection := db.Database("SocialFlux").Collection("posts")
@@ -165,7 +164,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		memberDetails = append(memberDetails, details)
 	}
 
-	// Prepare the basic response structure based on action
+	// Prepare basic response structure
 	result := map[string]interface{}{
 		"name":           coterie.Name,
 		"description":    coterie.Description,
@@ -184,7 +183,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		result["banner"] = coterie.Banner
 	}
 
-	// Handle `members` action - return only member information
+	// Handle members-only action
 	if action == "members" {
 		membersResponse := map[string]interface{}{
 			"members": memberDetails,
@@ -193,13 +192,13 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If action is `info`, exclude the posts
+	// Handle info-only action
 	if action == "info" {
 		json.NewEncoder(w).Encode(result)
 		return
 	}
 
-	// Handle post count and post details for `all` or unspecified action
+	// Count posts for the coterie
 	postCount, err := postsCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -207,9 +206,9 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	}
 	result["TotalPosts"] = postCount
 
-	// Fetch posts if no action is specified or action is "all"
+	// Fetch posts if action is "posts" or unspecified
 	var posts []map[string]interface{}
-	if action == "" || action == "all" {
+	if action == "posts" || action == "" || action == "all" {
 		postCursor, err := postsCollection.Find(ctx, bson.M{"coterie": coterie.Name}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -301,6 +300,11 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				postMap["scheduledFor"] = post.ScheduledFor
 			}
 			posts = append(posts, postMap)
+		}
+
+		if action == "posts" {
+			json.NewEncoder(w).Encode(map[string]interface{}{"Post": posts})
+			return
 		}
 		result["Post"] = posts
 	}
