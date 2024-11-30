@@ -15,6 +15,7 @@ type Post struct {
 	TimeAgo       string    `bson:"timeAgo" json:"timeAgo"`
 	ScheduledFor  time.Time `bson:"scheduledFor" json:"scheduledFor"`
 	Image         []string  `bson:"image" json:"image"`
+	Indexing      bool      `bson:"isIndexed"`
 	Hearts        []string  `bson:"hearts" json:"hearts"`
 	CreatedAt     time.Time `bson:"createdAt" json:"createdAt"`
 	Poll          []Poll    `bson:"poll,omitempty" json:"poll,omitempty"`
@@ -42,6 +43,7 @@ type NewPost struct {
 	ID           string    `json:"id,omitempty" bson:"_id,omitempty"`
 	Title        string    `json:"title"`
 	Content      string    `json:"content"`
+	Indexing     bool      `bson:"isIndexed"`
 	Author       string    `json:"author"`
 	Image        []string  `json:"image,omitempty"`
 	ScheduledFor time.Time `bson:"scheduledFor" json:"scheduledFor"`
@@ -113,28 +115,29 @@ type Comment struct {
 }
 
 type User struct {
-	ID             string    `json:"id"`
-	Username       string    `json:"username"`
-	DisplayName    string    `json:"displayname"`
-	UserID         int       `bson:"userid" json:"userid"`
-	Email          string    `bson:"email" json:"email"`
-	CreatedAt      time.Time `bson:"createdAt" json:"createdAt"`
-	ProfilePicture string    `bson:"profilePicture" json:"profilePicture"`
-	ProfileBanner  string    `bson:"profileBanner" json:"profileBanner"`
-	Bio            string    `bson:"bio" json:"bio"`
-	IsVerified     bool      `json:"isVerified"`
-	IsOrganisation bool      `json:"isOrganisation"`
-	IsDeveloper    bool      `json:"isDeveloper"`
-	IsPartner      bool      `json:"isPartner"`
-	IsOwner        bool      `json:"isOwner"`
-	IsModerator    bool      `json:"isModerator"`
-	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
-	IsBanned       bool      `json:"isBanned"`
-	Session        []Session `bson:"session" json:"session"`
-	Password       string    `bson:"password,omitempty" json:"-"`
-	Links          []string  `bson:"links,omitempty" json:"links,omitempty"`
-	Followers      []string  `bson:"followers" json:"followers"`
-	Following      []string  `bson:"following" json:"following"`
+	ID              string    `json:"id"`
+	Username        string    `json:"username"`
+	DisplayName     string    `json:"displayname"`
+	UserID          int       `bson:"userid" json:"userid"`
+	Email           string    `bson:"email" json:"email"`
+	CreatedAt       time.Time `bson:"createdAt" json:"createdAt"`
+	ProfilePicture  string    `bson:"profilePicture" json:"profilePicture"`
+	ProfileBanner   string    `bson:"profileBanner" json:"profileBanner"`
+	Bio             string    `bson:"bio" json:"bio"`
+	IsVerified      bool      `json:"isVerified"`
+	IsOrganisation  bool      `json:"isOrganisation"`
+	IsDeveloper     bool      `json:"isDeveloper"`
+	IsPartner       bool      `json:"isPartner"`
+	IsOwner         bool      `json:"isOwner"`
+	IsModerator     bool      `json:"isModerator"`
+	IsPrivate       bool      `bson:"isPrivate" json:"isPrivate"`
+	IsPrivateHearts bool      `bson:"isPrivateHearts"`
+	IsBanned        bool      `json:"isBanned"`
+	Session         []Session `bson:"session" json:"session"`
+	Password        string    `bson:"password,omitempty" json:"-"`
+	Links           []string  `bson:"links,omitempty" json:"links,omitempty"`
+	Followers       []string  `bson:"followers" json:"followers"`
+	Following       []string  `bson:"following" json:"following"`
 }
 
 type Session struct {

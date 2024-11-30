@@ -26,6 +26,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	action := r.Header.Get("X-action")
 	badge := r.Header.Get("X-badge")
 	encryptedid := r.Header.Get("X-modid")
+	entity := r.Header.Get("X-entity")
 
 	modID, err := middlewares.DecryptAES(encryptedid)
 	if err != nil {
@@ -40,7 +41,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the mod is an owner
+	// Check if the mod is an owner or moderator
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	modFilter := bson.M{"id": modID}
 	var modUser types.User
@@ -50,47 +51,90 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the user has permission
+	// Check if the mod has permission to manage
 	if !modUser.IsOwner && !modUser.IsModerator && !modUser.IsDeveloper {
 		http.Error(w, `{"error": "Permission denied. Only owners, moderators, or developers can manage badges."}`, http.StatusForbidden)
 		return
 	}
 
-	// Find the user by username
-	userFilter := bson.M{"username": username}
-	var user types.User
-	err = usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
-	if err != nil {
-		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
-		return
-	}
+	// Handle entity based on X-entity header
+	switch entity {
+	case "user":
+		// Manage badge for user
+		userFilter := bson.M{"username": username}
+		var user types.User
+		err := usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
+		if err != nil {
+			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
+			return
+		}
 
-	// Update the user's badge based on action
-	update := bson.M{}
-	switch action {
-	case "add":
-		update = handleBadgeUpdate(user, badge, true)
-	case "remove":
-		update = handleBadgeUpdate(user, badge, false)
+		// Update the user's badge based on action
+		update := bson.M{}
+		switch action {
+		case "add":
+			update = handleBadgeUpdateForUser(user, badge, true)
+		case "remove":
+			update = handleBadgeUpdateForUser(user, badge, false)
+		default:
+			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Apply the update to the user
+		_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
+		if err != nil {
+			http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Badge %s successfully %sed for user %s", badge, action, username),
+		})
+
+	case "coterie":
+		// Manage badge for coterie
+		coterieName := r.Header.Get("X-username")
+		coteriesCollection := db.Database("SocialFlux").Collection("coterie")
+		coterieFilter := bson.M{"name": coterieName}
+		var coterie types.Coterie
+		err := coteriesCollection.FindOne(context.Background(), coterieFilter).Decode(&coterie)
+		if err != nil {
+			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+			return
+		}
+
+		// Update the coterie's badge based on action
+		update := bson.M{}
+		switch action {
+		case "add":
+			update = handleBadgeUpdateForCoterie(coterie, badge, true)
+		case "remove":
+			update = handleBadgeUpdateForCoterie(coterie, badge, false)
+		default:
+			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+			return
+		}
+
+		// Apply the update to the coterie
+		_, err = coteriesCollection.UpdateOne(context.Background(), coterieFilter, bson.M{"$set": update})
+		if err != nil {
+			http.Error(w, `{"error": "Failed to update coterie badges"}`, http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": fmt.Sprintf("Badge %s successfully %sed for coterie %s", badge, action, coterieName),
+		})
+
 	default:
-		http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
-		return
+		http.Error(w, `{"error": "Invalid entity type"}`, http.StatusBadRequest)
 	}
-
-	// Apply the update to the user
-	_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
-	if err != nil {
-		http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"message": fmt.Sprintf("Badge %s successfully %sed for user %s", badge, action, username),
-	})
 }
 
-func handleBadgeUpdate(_ types.User, badge string, add bool) bson.M {
+func handleBadgeUpdateForUser(user types.User, badge string, add bool) bson.M {
 	switch badge {
 	case "dev":
 		return bson.M{"isDeveloper": add}
@@ -102,6 +146,17 @@ func handleBadgeUpdate(_ types.User, badge string, add bool) bson.M {
 		return bson.M{"isOwner": add}
 	case "moderator":
 		return bson.M{"isModerator": add}
+	default:
+		return bson.M{}
+	}
+}
+
+func handleBadgeUpdateForCoterie(coterie types.Coterie, badge string, add bool) bson.M {
+	switch badge {
+	case "organisation":
+		return bson.M{"isOrganisation": add}
+	case "verified":
+		return bson.M{"isVerified": add}
 	default:
 		return bson.M{}
 	}

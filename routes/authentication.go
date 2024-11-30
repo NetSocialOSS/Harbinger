@@ -630,15 +630,16 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare response
 	response := map[string]interface{}{
-		"_id":            user.ID,
-		"username":       user.Username,
-		"displayname":    user.DisplayName,
-		"bio":            user.Bio,
-		"links":          user.Links,
-		"isPrivate":      user.IsPrivate,
-		"profilePicture": user.ProfilePicture,
-		"isOrganisation": user.IsOrganisation,
-		"sessions":       sessions,
+		"_id":             user.ID,
+		"username":        user.Username,
+		"displayname":     user.DisplayName,
+		"bio":             user.Bio,
+		"links":           user.Links,
+		"isPrivateHearts": user.IsPrivateHearts,
+		"isPrivate":       user.IsPrivate,
+		"profilePicture":  user.ProfilePicture,
+		"isOrganisation":  user.IsOrganisation,
+		"sessions":        sessions,
 	}
 
 	w.Header().Set("Content-Type", "application/json")

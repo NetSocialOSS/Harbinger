@@ -74,10 +74,13 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var visiblePosts []map[string]interface{} // A slice to store formatted posts
-
-	now := time.Now() // Current time for comparison
-
+	now := time.Now()                         // Current time for comparison
 	for i, post := range posts {
+		// Skip the post if indexing is false (for coterie only posts)
+		if !post.Indexing {
+			continue
+		}
+
 		var author types.Author
 		// Check if the author is cached
 		cachedAuthor := userCache.Get(post.Author)

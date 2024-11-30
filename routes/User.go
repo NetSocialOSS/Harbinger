@@ -160,14 +160,14 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		"links":          user.Links,
 	}
 
-	// If the user is private, do not show additional data
+	// If the user is private, return minimal data
 	if user.IsPrivate {
 		response["message"] = "This account is private"
 		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Include followers and following usernames if action is set to "followers" or "following"
+	// Helper function to resolve user IDs to usernames
 	userIDToUsername := make(map[string]string)
 	getUsername := func(id string) (string, error) {
 		if username, found := userIDToUsername[id]; found {
@@ -185,7 +185,60 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return u.Username, nil
 	}
 
-	// Convert followers and following from IDs to usernames
+	// Helper function to process post data
+	processPost := func(post types.Post, author types.User) (map[string]interface{}, error) {
+		// Resolve usernames in hearts
+		var hearts []string
+		for _, heartID := range post.Hearts {
+			username, err := getUsername(heartID)
+			if err != nil {
+				return nil, fmt.Errorf("error resolving heart usernames: %v", err)
+			}
+			hearts = append(hearts, username)
+		}
+
+		// Process poll data if present
+		if post.Poll != nil {
+			totalVotes := 0
+			for i := range post.Poll {
+				for j := range post.Poll[i].Options {
+					optionVoteCount := len(post.Poll[i].Options[j].Votes)
+					totalVotes += optionVoteCount
+
+					post.Poll[i].Options[j].Votes = nil
+					post.Poll[i].Options[j].VoteCount = optionVoteCount
+				}
+			}
+			if len(post.Poll) > 0 {
+				post.Poll[0].TotalVotes = totalVotes
+			}
+		}
+
+		// Construct post data
+		return map[string]interface{}{
+			"_id":     post.ID,
+			"title":   post.Title,
+			"content": post.Content,
+			"authorDetails": map[string]interface{}{
+				"username":       author.Username,
+				"isVerified":     author.IsVerified,
+				"isOrganisation": author.IsOrganisation,
+				"profileBanner":  author.ProfileBanner,
+				"profilePicture": author.ProfilePicture,
+				"isDeveloper":    author.IsDeveloper,
+				"isPartner":      author.IsPartner,
+				"isOwner":        author.IsOwner,
+				"isModerator":    author.IsModerator,
+			},
+			"poll":          post.Poll,
+			"image":         post.Image,
+			"createdAt":     post.CreatedAt,
+			"hearts":        hearts,
+			"commentNumber": len(post.Comments),
+		}, nil
+	}
+
+	// Handle "followers" or "following" actions
 	if action == "followers" || action == "following" {
 		var userIDs []string
 		if action == "followers" {
@@ -198,7 +251,7 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		for _, id := range userIDs {
 			username, err := getUsername(id)
 			if err != nil {
-				http.Error(w, "Error fetching user data", http.StatusInternalServerError)
+				http.Error(w, "Error resolving usernames", http.StatusInternalServerError)
 				return
 			}
 			usernames = append(usernames, username)
@@ -210,22 +263,35 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch posts if action is not specified or action is "posts"
-	if action == "" || action == "posts" {
-		var posts []map[string]interface{}
-		postCollection := db.Database("SocialFlux").Collection("posts")
-		cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
-		if err != nil {
-			http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+	// Handle "hearts" action
+	if action == "hearts" {
+		if user.IsPrivateHearts {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"message": "This user has their hearted posts set as private!",
+			})
 			return
 		}
+
+		var heartedPosts []map[string]interface{}
+		postCollection := db.Database("SocialFlux").Collection("posts")
+		cursor, err := postCollection.Find(r.Context(), bson.M{"hearts": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
+		if err != nil {
+			http.Error(w, "Failed to fetch hearted posts", http.StatusInternalServerError)
+			return
+		}
+		defer cursor.Close(r.Context())
 
 		for cursor.Next(r.Context()) {
 			var post types.Post
 			err := cursor.Decode(&post)
 			if err != nil {
-				http.Error(w, "Error decoding posts data", http.StatusInternalServerError)
+				http.Error(w, "Error decoding post data", http.StatusInternalServerError)
 				return
+			}
+
+			// Skip non-indexable posts
+			if !post.Indexing {
+				continue
 			}
 
 			// Fetch author details
@@ -236,69 +302,56 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Replace user IDs in hearts with usernames
-			var hearts []string
-			for _, heartID := range post.Hearts {
-				username, err := getUsername(heartID)
-				if err != nil {
-					http.Error(w, "Error fetching heart user data", http.StatusInternalServerError)
-					return
-				}
-				hearts = append(hearts, username)
+			postData, err := processPost(post, author)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			heartedPosts = append(heartedPosts, postData)
+		}
+
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"posts": heartedPosts,
+		})
+		return
+	}
+
+	// Handle "posts" or default action
+	if action == "" || action == "posts" {
+		var posts []map[string]interface{}
+		postCollection := db.Database("SocialFlux").Collection("posts")
+		cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
+		if err != nil {
+			http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+			return
+		}
+		defer cursor.Close(r.Context())
+
+		for cursor.Next(r.Context()) {
+			var post types.Post
+			err := cursor.Decode(&post)
+			if err != nil {
+				http.Error(w, "Error decoding post data", http.StatusInternalServerError)
+				return
 			}
 
-			// Process poll data if applicable
-			if post.Poll != nil {
-				totalVotes := 0
-				for i := range post.Poll {
-					for j := range post.Poll[i].Options {
-						optionVoteCount := len(post.Poll[i].Options[j].Votes)
-						totalVotes += optionVoteCount
-
-						post.Poll[i].Options[j].Votes = nil
-						post.Poll[i].Options[j].VoteCount = optionVoteCount
-					}
-				}
-				if len(post.Poll) > 0 {
-					post.Poll[0].TotalVotes = totalVotes
-				}
-			}
-
-			// Skip future scheduled posts
-			now := time.Now()
-			if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
+			// Skip non-indexable posts
+			if !post.Indexing {
 				continue
 			}
 
-			postData := map[string]interface{}{
-				"_id":     post.ID,
-				"title":   post.Title,
-				"content": post.Content,
-				"authorDetails": map[string]interface{}{
-					"username":       author.Username,
-					"isVerified":     author.IsVerified,
-					"isOrganisation": author.IsOrganisation,
-					"profileBanner":  author.ProfileBanner,
-					"profilePicture": author.ProfilePicture,
-					"isDeveloper":    author.IsDeveloper,
-					"isPartner":      author.IsPartner,
-					"isOwner":        author.IsOwner,
-					"isModerator":    user.IsModerator,
-				},
-				"poll":          post.Poll,
-				"image":         post.Image,
-				"createdAt":     post.CreatedAt,
-				"hearts":        hearts,
-				"commentNumber": len(post.Comments),
-			}
-			if !post.ScheduledFor.IsZero() {
-				postData["scheduledFor"] = post.ScheduledFor
+			postData, err := processPost(post, user)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
 			}
 			posts = append(posts, postData)
 		}
+
 		response["posts"] = posts
 	}
 
+	// Final response
 	json.NewEncoder(w).Encode(response)
 }
 
@@ -516,15 +569,15 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 	// Get the MongoDB client from the request context
 	db := r.Context().Value("db").(*mongo.Client)
 
-	// Retrieve the userId from query parameters
+	// Retrieve the userId from header
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		http.Error(w, "userId header is required", http.StatusBadRequest)
 		return
 	}
 	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
 
@@ -535,7 +588,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 	// Get the users collection
 	usersCollection := db.Database("SocialFlux").Collection("users")
 
-	// Find the user by ID and retrieve the current value of isPrivate
+	// Find the user by ID and retrieve the current value of privacy settings
 	var user bson.M
 	err = usersCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
 	if err != nil {
@@ -547,30 +600,74 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Toggle the isPrivate field
-	isPrivate, ok := user["isPrivate"].(bool)
-	if !ok {
-		http.Error(w, "Error retrieving the isPrivate field", http.StatusInternalServerError)
-		return
-	}
-	newPrivacyStatus := !isPrivate
-
-	// Update the user's isPrivate field
-	update := bson.M{
-		"$set": bson.M{"isPrivate": newPrivacyStatus},
-	}
-	_, err = usersCollection.UpdateOne(ctx, bson.M{"id": userID}, update, options.Update().SetUpsert(false))
-	if err != nil {
-		http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
+	// Retrieve the action parameter from the query string
+	action := r.Header.Get("X-action")
+	if action == "" {
+		http.Error(w, "action parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Respond with the new privacy status
+	// Prepare the update document
+	update := bson.M{}
+
+	// Define possible actions and handle them
+	switch action {
+	case "togglePrivateHearts":
+		// Check if 'isPrivateHearts' exists and is a bool, if not, set it to false
+		isPrivateHearts, ok := user["isPrivateHearts"].(bool)
+		if !ok {
+			// If it doesn't exist or is not a bool, set it to false
+			update["$set"] = bson.M{"isPrivateHearts": false}
+			isPrivateHearts = false
+		}
+
+		// Toggle the value
+		update["$set"] = bson.M{"isPrivateHearts": !isPrivateHearts}
+
+	case "togglePrivateAccount":
+		// Check if 'isPrivate' exists and is a bool, if not, set it to false
+		isPrivate, ok := user["isPrivate"].(bool)
+		if !ok {
+			// If it doesn't exist or is not a bool, set it to false
+			update["$set"] = bson.M{"isPrivate": false}
+			isPrivate = false
+		}
+
+		// Toggle the value
+		update["$set"] = bson.M{"isPrivate": !isPrivate}
+
+	default:
+		http.Error(w, "Invalid action parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Perform the update if any changes were made
+	if len(update) > 0 {
+		_, err = usersCollection.UpdateOne(ctx, bson.M{"id": userID}, update, options.Update().SetUpsert(false))
+		if err != nil {
+			http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Respond with the updated privacy settings
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":      "Privacy setting updated successfully",
-		"isPrivateNow": newPrivacyStatus,
-	})
+	response := map[string]interface{}{
+		"message": "Privacy setting updated successfully",
+	}
+
+	// Include the updated settings in the response
+	if action == "togglePrivateHearts" {
+		// Return the updated isPrivateHearts value (opposite of what it was)
+		response["isPrivateHeartsNow"] = !user["isPrivateHearts"].(bool)
+	}
+
+	if action == "togglePrivateAccount" {
+		// Return the updated isPrivate value (opposite of what it was)
+		response["isPrivateNow"] = !user["isPrivate"].(bool)
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 func User(r *chi.Mux) {
