@@ -50,8 +50,8 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	usersCollection := db.Database("SocialFlux").Collection("users")
 	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
 
-	title := r.Header.Get("X-title")
-	content := r.Header.Get("X-content")
+	title := r.URL.Query().Get("title")
+	content := r.URL.Query().Get("content")
 	encrypteduserId := r.Header.Get("X-userID")
 	image := r.Header.Get("X-image")
 	coterieName := r.Header.Get("X-coterie")
@@ -65,11 +65,14 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		// Validate the X-indexing header, must be "true" or "false"
 		if indexingStr == "true" {
 			indexing = true
-		} else if indexingStr != "true" {
+		} else if indexingStr == "false" {
+			indexing = false
+		} else {
 			http.Error(w, "Invalid value for X-indexing. It must be 'true' or 'false'", http.StatusBadRequest)
 			return
 		}
 	}
+
 	userId, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)

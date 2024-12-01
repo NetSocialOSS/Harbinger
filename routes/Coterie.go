@@ -1178,6 +1178,12 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 	var coteries []map[string]interface{}
 	for cursor.Next(ctx) {
 		var coterie types.Coterie
+		postCollection := db.Database("SocialFlux").Collection("posts")
+		postCount, err := postCollection.CountDocuments(ctx, bson.M{"coterie": coterie.Name})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 
 		if err := cursor.Decode(&coterie); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1192,8 +1198,10 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 		coteries = append(coteries, map[string]interface{}{
 			"name":           coterie.Name,
 			"avatar":         coterie.Avatar,
+			"banner":         coterie.Banner,
 			"isVerified":     coterie.IsVerified,
 			"isChatAllowed":  coterie.IsChatAllowed,
+			"PostsCount":     postCount,
 			"isOwner":        isOwner,
 			"isOrganisation": coterie.IsOrganisation,
 			"isAdmin":        isAdmin,
