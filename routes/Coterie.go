@@ -819,11 +819,11 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	coterieCollection := db.Database("SocialFlux").Collection("coterie")
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	coterieName := r.FormValue("CoterieName")
-	role := r.FormValue("role")
-	memberName := r.FormValue("username")
+	coterieName := r.URL.Query().Get("CoterieName")
+	role := r.URL.Query().Get("role")
+	memberName := r.URL.Query().Get("username")
 	encryptedUserID := r.Header.Get("X-userID")
-	action := r.FormValue("action")
+	action := r.URL.Query().Get("action")
 
 	// Decrypt and parse the user ID
 	promoterIDStr, err := middlewares.DecryptAES(encryptedUserID)
@@ -859,8 +859,8 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if role != "moderators" && role != "admins" {
-		http.Error(w, "Invalid role. Must be 'moderators' or 'admins'", http.StatusBadRequest)
+	if role != "Moderator" && role != "Owner" && role != "Admin" {
+		http.Error(w, "Invalid role. Must be 'Moderator' or 'Admin' or 'Owner'", http.StatusBadRequest)
 		return
 	}
 
@@ -938,7 +938,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch post details
 	var post types.Post
-	err = postCollection.FindOne(context.Background(), bson.M{"id": postIDStr}).Decode(&post)
+	err = postCollection.FindOne(context.Background(), bson.M{"_id": postIDStr}).Decode(&post)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			http.Error(w, "Post not found", http.StatusNotFound)
@@ -997,7 +997,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove the post from the posts collection
-	result, err := postCollection.DeleteOne(context.Background(), bson.M{"id": postIDStr})
+	result, err := postCollection.DeleteOne(context.Background(), bson.M{"_id": postIDStr})
 	if err != nil {
 		http.Error(w, "Error removing post: "+err.Error(), http.StatusInternalServerError)
 		return
