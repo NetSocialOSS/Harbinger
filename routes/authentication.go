@@ -3,10 +3,12 @@ package routes
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
@@ -118,31 +120,33 @@ func sendWelcomeEmail(email string) error {
 }
 
 func UserSignup(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, "Database connection not available", http.StatusInternalServerError)
-		return
-	}
+	db := r.Context().Value("db").(*mongo.Client)
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	username := r.Header.Get("x-username")
-	encryptedemail := r.Header.Get("X-email")
-	encryptedPassword := r.Header.Get("X-Password")
-
-	if username == "" || encryptedemail == "" || encryptedPassword == "" {
-		http.Error(w, "Missing required fields", http.StatusBadRequest)
+	var signupData struct {
+		Username          string `json:"username"`
+		EncryptedEmail    string `json:"email"`
+		EncryptedPassword string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&signupData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	email, err := middlewares.DecryptAES(encryptedemail)
+	email, err := middlewares.DecryptAES(signupData.EncryptedEmail)
 	if err != nil {
 		http.Error(w, "Failed to decrypt email", http.StatusBadRequest)
 		return
 	}
 
-	password, err := middlewares.DecryptAES(encryptedPassword)
+	password, err := middlewares.DecryptAES(signupData.EncryptedPassword)
 	if err != nil {
 		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
+		return
+	}
+
+	if signupData.Username == "" || email == "" || password == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
 
@@ -166,7 +170,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	emailDomain := emailParts[1]
 	if _, exists := disposableDomains[emailDomain]; exists {
-		err = sendDiscordWebhookFailure(username, email)
+		err = sendDiscordWebhookFailure(signupData.Username, email)
 		if err != nil {
 			http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
 			return
@@ -177,7 +181,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	count, err := userCollection.CountDocuments(context.TODO(), bson.M{
 		"$or": []bson.M{
-			{"username": username},
+			{"username": signupData.Username},
 			{"email": email},
 		},
 	})
@@ -202,8 +206,8 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	user := types.User{
 		ID:             uuid.New().String(),
 		UserID:         newUserID,
-		Username:       username,
-		DisplayName:    username,
+		Username:       signupData.Username,
+		DisplayName:    signupData.Username,
 		IsVerified:     false,
 		IsOrganisation: false,
 		ProfilePicture: "https://cdn.netsocial.app/logos/netsocial.png",
@@ -222,10 +226,8 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send the welcome email
 	err = sendWelcomeEmail(email)
 	if err != nil {
-		// Delete the user if the email fails to send
 		_, deleteErr := userCollection.DeleteOne(context.TODO(), bson.M{"_id": result.InsertedID})
 		if deleteErr != nil {
 			http.Error(w, "Failed to send email and rollback user creation", http.StatusInternalServerError)
@@ -235,14 +237,14 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = sendDiscordWebhook(username)
+	err = sendDiscordWebhook(signupData.Username)
 	if err != nil {
 		http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintln(w, `{"message": "User created successfully"}`)
+	json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
 }
 
 func sendDiscordWebhook(username string) error {
@@ -286,41 +288,31 @@ func sendDiscordWebhookFailure(username, email string) error {
 }
 
 func UserLogin(w http.ResponseWriter, r *http.Request) {
-	// Access the database connection from the context
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
-		return
-	}
-
+	db := r.Context().Value("db").(*mongo.Client)
 	userCollection := db.Database("SocialFlux").Collection("users")
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
-	// Retrieve login data from request headers
-	Identifier := r.Header.Get("X-usernameoremail")
-	password := r.Header.Get("X-password")
-
-	// Validate that the headers are not empty
-	if Identifier == "" || password == "" {
-		http.Error(w, `{"error": "Missing required fields"}`, http.StatusBadRequest)
+	var loginData struct {
+		Identifier string `json:"identifier"`
+		Password   string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&loginData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Decrypt Identifier
-	decryptedIdentifier, err := middlewares.DecryptAES(Identifier)
+	decryptedIdentifier, err := middlewares.DecryptAES(loginData.Identifier)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt Identifier"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt identifier", http.StatusBadRequest)
 		return
 	}
 
-	// Decrypt the password
-	decryptedPassword, err := middlewares.DecryptAES(password)
+	decryptedPassword, err := middlewares.DecryptAES(loginData.Password)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt password"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt password", http.StatusBadRequest)
 		return
 	}
 
-	// Find user in the database
 	var user types.User
 	err = userCollection.FindOne(context.TODO(), bson.M{
 		"$or": []bson.M{
@@ -329,31 +321,28 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		},
 	}).Decode(&user)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid credentials"}`, http.StatusUnauthorized)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Compare hashed passwords
 	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(decryptedPassword))
 	if err != nil {
-		http.Error(w, `{"error": "Invalid credentials"}`, http.StatusUnauthorized)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// Validate and generate token
 	userUUID, err := uuid.Parse(user.ID)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusInternalServerError)
+		http.Error(w, "Invalid user ID format", http.StatusInternalServerError)
 		return
 	}
 
 	token, err := generateJWT(userUUID)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to generate token"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
-	// Set the JWT token in a secure cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    token,
@@ -362,7 +351,6 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 	})
 
-	// Create and store session
 	sessionID := uuid.New().String()
 	device := r.UserAgent()
 
@@ -373,7 +361,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		return []byte(jwtSecret), nil
 	})
 	if err != nil {
-		http.Error(w, `{"error": "Failed to parse token"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to parse token", http.StatusInternalServerError)
 		return
 	}
 
@@ -398,22 +386,16 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	_, err = sessionCollection.InsertOne(context.TODO(), session)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to create session"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	// Send login info to Discord webhook
 	err = sendDiscordWebhookLogin(user.Username)
 	if err != nil {
 		log.Printf("Error sending Discord webhook: %v", err)
 	}
 
-	// Respond with success message
-	response := map[string]interface{}{
-		"message": "Logged in successfully",
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged in successfully"})
 }
 
 func sendDiscordWebhookLogin(username string) error {
@@ -439,43 +421,38 @@ func sendDiscordWebhookLogin(username string) error {
 }
 
 func UserLogout(w http.ResponseWriter, r *http.Request) {
-	currentSessionID := r.Header.Get("X-sessionID")
-	encrypteduserID := r.Header.Get("X-userID")
-
-	if currentSessionID == "" || encrypteduserID == "" {
-		http.Error(w, jsonResponse("Missing session_id or userID"), http.StatusBadRequest)
+	var logoutData struct {
+		SessionID string `json:"sessionId"`
+		UserID    string `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&logoutData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID, err := middlewares.DecryptAES(encrypteduserID)
+	userID, err := middlewares.DecryptAES(logoutData.UserID)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
 
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, jsonResponse("Database connection not available"), http.StatusInternalServerError)
-		return
-	}
+	db := r.Context().Value("db").(*mongo.Client)
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
 	result, err := sessionCollection.DeleteOne(context.TODO(), bson.M{
-		"session_id": currentSessionID,
+		"session_id": logoutData.SessionID,
 		"user_id":    userID,
 	})
 	if err != nil {
-		http.Error(w, jsonResponse("Failed to revoke session"), http.StatusInternalServerError)
+		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	// Check if a session was deleted
 	if result.DeletedCount == 0 {
-		http.Error(w, jsonResponse("Session not found"), http.StatusNotFound)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Invalidate the JWT token (log out the user)
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
@@ -485,7 +462,6 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 	})
 
-	// Clear the session cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
 		Value:    "",
@@ -495,109 +471,101 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 	})
 
-	// Respond with a success message
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
 }
 
 func ChangePassword(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, "Database connection not available", http.StatusInternalServerError)
-		return
-	}
+	db := r.Context().Value("db").(*mongo.Client)
 	userCollection := db.Database("SocialFlux").Collection("users")
 
-	userID := r.Header.Get("X-userID")
+	var passwordData struct {
+		UserID      string `json:"userId"`
+		OldPassword string `json:"oldPassword"`
+		NewPassword string `json:"newPassword"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&passwordData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	userId, err := middlewares.DecryptAES(passwordData.UserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
 	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{"id": userID}).Decode(&user)
+	err = userCollection.FindOne(context.TODO(), bson.M{"id": userId}).Decode(&user)
 	if err != nil {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
 
-	oldPassword := r.Header.Get("X-oldpassword")
-	newPassword := r.Header.Get("X-newpassword")
-
-	// Decrypt the oldpassword
-	decryptedoldPassword, err := middlewares.DecryptAES(oldPassword)
+	decryptedOldPassword, err := middlewares.DecryptAES(passwordData.OldPassword)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt old password"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt old password", http.StatusBadRequest)
 		return
 	}
 
-	// Decrypt the newpassword
-	decryptednewPassword, err := middlewares.DecryptAES(newPassword)
+	decryptedNewPassword, err := middlewares.DecryptAES(passwordData.NewPassword)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to decrypt new password"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt new password", http.StatusBadRequest)
 		return
 	}
 
-	if newPassword == "" {
+	if decryptedNewPassword == "" {
 		http.Error(w, "New password is required", http.StatusBadRequest)
 		return
 	}
 
-	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(decryptedoldPassword))
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(decryptedOldPassword))
 	if err != nil {
 		http.Error(w, "Incorrect old password", http.StatusUnauthorized)
 		return
 	}
 
-	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(decryptednewPassword), bcrypt.DefaultCost)
+	hashedNewPassword, err := bcrypt.GenerateFromPassword([]byte(decryptedNewPassword), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Failed to hash new password", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": userID}, bson.M{"$set": bson.M{"password": string(hashedNewPassword)}})
+	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": passwordData.UserID}, bson.M{"$set": bson.M{"password": string(hashedNewPassword)}})
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, `{"message": "Password changed successfully"}`)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Password changed successfully"})
 }
 
 func CurrentUser(w http.ResponseWriter, r *http.Request) {
-	// Retrieve MongoDB client from context
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
-		return
-	}
-
-	// Retrieve user ID from context (UUID)
+	db := r.Context().Value("db").(*mongo.Client)
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
-		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusInternalServerError)
+		http.Error(w, "Invalid user ID", http.StatusInternalServerError)
 		return
 	}
 
-	// Set up collections
 	userCollection := db.Database("SocialFlux").Collection("users")
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
-	// Retrieve user information
 	var user types.User
 	err := userCollection.FindOne(context.TODO(), bson.M{"id": userID.String()}).Decode(&user)
 	if err != nil {
-		http.Error(w, `{"error": "Failed to find user"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to find user", http.StatusInternalServerError)
 		return
 	}
 
-	// Retrieve sessions for the user
 	var sessions []map[string]interface{}
 	cursor, err := sessionCollection.Find(context.TODO(), bson.M{"user_id": userID.String()})
 	if err != nil {
-		http.Error(w, `{"error": "Failed to retrieve sessions"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve sessions", http.StatusInternalServerError)
 		return
 	}
 	defer cursor.Close(context.TODO())
 
-	// Retrieve the session ID from the cookie
 	currentSessionCookie, err := r.Cookie("session_id")
 	var currentSessionID string
 	if err == nil {
@@ -607,11 +575,10 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 	for cursor.Next(context.TODO()) {
 		var session types.Session
 		if err := cursor.Decode(&session); err != nil {
-			http.Error(w, `{"error": "Failed to decode session"}`, http.StatusInternalServerError)
+			http.Error(w, "Failed to decode session", http.StatusInternalServerError)
 			return
 		}
 
-		// Check if this session is the current session
 		currentSession := session.SessionID == currentSessionID
 
 		sessions = append(sessions, map[string]interface{}{
@@ -624,11 +591,10 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := cursor.Err(); err != nil {
-		http.Error(w, `{"error": "Cursor error"}`, http.StatusInternalServerError)
+		http.Error(w, "Cursor error", http.StatusInternalServerError)
 		return
 	}
 
-	// Prepare response
 	response := map[string]interface{}{
 		"_id":             user.ID,
 		"username":        user.Username,
@@ -642,74 +608,148 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 		"sessions":        sessions,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, `{"error": "Failed to encode response"}`, http.StatusInternalServerError)
-	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
-	// Parse query parameters
-	sessionIDStr := r.Header.Get("X-sessionID")
-	encrypteduserID := r.Header.Get("X-userID")
+	var logoutData struct {
+		SessionID string `json:"sessionId"`
+		UserID    string `json:"userId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&logoutData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
-	userIDStr, err := middlewares.DecryptAES(encrypteduserID)
+	userID, err := uuid.Parse(logoutData.UserID)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
-	// Validate the user_id (UUID)
-	userID, err := uuid.Parse(userIDStr)
+	sessionID, err := uuid.Parse(logoutData.SessionID)
 	if err != nil {
-		http.Error(w, `{"error": "Invalid user ID"}`, http.StatusBadRequest)
+		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
 
-	// Validate the session_id (UUID)
-	sessionID, err := uuid.Parse(sessionIDStr)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid session ID"}`, http.StatusBadRequest)
-		return
-	}
-
-	// Retrieve database client from context
-	db, ok := r.Context().Value("db").(*mongo.Client)
-	if !ok {
-		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
-		return
-	}
-
+	db := r.Context().Value("db").(*mongo.Client)
 	sessionCollection := db.Database("SocialFlux").Collection("sessions")
 
-	// Delete the session and its JWT token
 	result, err := sessionCollection.DeleteOne(context.TODO(), bson.M{
-		"session_id": sessionID.String(), // Store as a string representation of UUID
-		"user_id":    userID.String(),    // Store as a string representation of UUID
+		"session_id": sessionID.String(),
+		"user_id":    userID.String(),
 	})
 	if err != nil {
-		http.Error(w, `{"error": "Failed to revoke session"}`, http.StatusInternalServerError)
+		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
 	if result.DeletedCount == 0 {
-		http.Error(w, `{"error": "Session not found"}`, http.StatusNotFound)
+		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Invalidate JWT token in cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
-		MaxAge:   -1,   // Expire the cookie immediately
-		Secure:   true, // Ensure the cookie is sent over HTTPS
+		MaxAge:   -1,
+		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
 		Path:     "/",
 	})
 
-	// Respond with success
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintln(w, `{"message": "Session revoked and user logged out successfully"}`)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Session revoked and user logged out successfully"})
+}
+
+func generateTemporaryPassword() (string, error) {
+	b := make([]byte, 15) // Generate a 15-byte random password
+	_, err := rand.Read(b)
+	if err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(b), nil
+}
+
+func ResetPassword(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*mongo.Client)
+	userCollection := db.Database("SocialFlux").Collection("users")
+
+	var resetData struct {
+		Identifier string `json:"identifier"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&resetData); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	var user types.User
+	err := userCollection.FindOne(context.TODO(), bson.M{
+		"$or": []bson.M{
+			{"username": resetData.Identifier},
+			{"email": resetData.Identifier},
+		},
+	}).Decode(&user)
+
+	if err != nil {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Generate a temporary password for the user
+	tempPassword, err := generateTemporaryPassword()
+	if err != nil {
+		http.Error(w, "Failed to generate temporary password", http.StatusInternalServerError)
+		return
+	}
+
+	// Hash the temporary password using bcrypt
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash temporary password", http.StatusInternalServerError)
+		return
+	}
+
+	// Update the user's password in the database
+	_, err = userCollection.UpdateOne(
+		context.TODO(),
+		bson.M{"id": user.ID},
+		bson.M{"$set": bson.M{
+			"password":          string(hashedPassword),
+			"password_reset_at": time.Now(),
+		}},
+	)
+	if err != nil {
+		http.Error(w, "Failed to update password", http.StatusInternalServerError)
+		return
+	}
+
+	// Send an email to the user with the temporary password
+	err = sendPasswordResetEmail(user.Email, tempPassword)
+	if err != nil {
+		http.Error(w, "Failed to send password reset email", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]string{"message": "Password reset email sent"})
+}
+
+func sendPasswordResetEmail(email, tempPassword string) error {
+	apiKey := os.Getenv("RESEND_API_KEY")
+	client := resend.NewClient(apiKey)
+
+	// Construct the email body
+	params := &resend.SendEmailRequest{
+		From:    "Netsocial <noreply@netsocial.app>",
+		To:      []string{email},
+		Subject: "Password Reset for Your Netsocial Account",
+		Html:    fmt.Sprintf("<p>Your temporary password is: <strong>%s</strong></p><p>Please log in and change your password immediately.</p>", tempPassword),
+	}
+
+	// Send the email using the Resend service
+	_, err := client.Emails.Send(params)
+	return err
 }
 
 func jsonResponse(message string) string {
@@ -724,4 +764,5 @@ func Auth(router chi.Router) {
 	router.Post("/auth/change-password", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(ChangePassword))).ServeHTTP))
 	router.Delete("/auth/logout/session", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(LogOutSession))).ServeHTTP))
 	router.Get("/auth/@me", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(CurrentUser))).ServeHTTP))
+	router.Post("/auth/reset-password", (middlewares.DiscordErrorReport(http.HandlerFunc(ResetPassword)).ServeHTTP))
 }
