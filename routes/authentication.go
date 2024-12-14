@@ -188,11 +188,11 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	_, err = tx.Exec(`
 		INSERT INTO users (
 			id, userid, username, displayname, email, password, 
-			profilepicture, createdat, links
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			profilepicture, createdat, links, isbanned
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 		userID, lastUserID+1, signupData.Username, signupData.Username, email,
 		hashedPassword, "https://cdn.netsocial.app/logos/netsocial.png",
-		time.Now(), pq.Array([]string{}),
+		time.Now(), pq.Array([]string{}), false,
 	)
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
