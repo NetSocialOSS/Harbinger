@@ -74,7 +74,7 @@ func main() {
 			"version": configuration.GetConfig().ApiVersion,
 			"author":  "Ranveer Soni",
 			"links": map[string]string{
-				"status": "https://status.netsocial.app",
+				"status": "https://netsocial.instatus.com",
 				"docs":   "https://docs.netsocial.app",
 			},
 		})

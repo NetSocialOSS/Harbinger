@@ -38,23 +38,23 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenCookie, err := r.Cookie("token")
 		if err != nil || tokenCookie == nil {
-			http.Error(w, "Hey! You need to provide your token in the authorization header. This endpoint is for authenticated users only!", http.StatusUnauthorized)
+			http.Error(w, "Token missing", http.StatusUnauthorized)
 			return
 		}
 
 		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("invalid token signing method")
+				return nil, errors.New("invalid signing method")
 			}
 			return []byte(jwtSecret), nil
 		})
-		if err != nil || !token.Valid {
+		if err != nil {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
+		if !ok || !token.Valid {
 			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
 			return
 		}
@@ -65,20 +65,16 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		db, ok := r.Context().Value("db").(*sql.DB)
-		if !ok {
-			http.Error(w, "Database connection not found", http.StatusInternalServerError)
-			return
-		}
-
-		var sessionExists bool
-		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM sessions WHERE user_id = $1 AND token = $2)", userID.String(), tokenCookie.Value).Scan(&sessionExists)
+		db := r.Context().Value("db").(*sql.DB)
+		var exists bool
+		query := "SELECT EXISTS(SELECT 1 FROM sessions WHERE userid = $1 AND token = $2)"
+		err = db.QueryRow(query, userID.String(), tokenCookie.Value).Scan(&exists)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
 			return
 		}
 
-		if !sessionExists {
+		if !exists {
 			http.Error(w, "Session expired", http.StatusUnauthorized)
 			return
 		}
@@ -246,7 +242,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	var user types.User
 
-	query := `SELECT id, username, email, password FROM users WHERE username = $1 OR email = $1 LIMIT 1`
+	query := `SELECT id, username, email, password FROM users WHERE username = $1 OR email = $1`
 	err = db.QueryRow(query, decryptedIdentifier).Scan(&user.ID, &user.Username, &user.Email, &user.Password)
 	if err == sql.ErrNoRows {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
@@ -262,9 +258,9 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userUUID, err := uuid.NewUUID()
+	userUUID, err := uuid.Parse(user.ID)
 	if err != nil {
-		http.Error(w, "Failed to generate user UUID", http.StatusInternalServerError)
+		http.Error(w, "Invalid user ID format", http.StatusInternalServerError)
 		return
 	}
 
@@ -298,7 +294,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	expirationTime := time.Unix(int64(claims.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
 
-	insertSessionQuery := `INSERT INTO sessions (session_id, user_id, device, started_at, expires_at, token) VALUES ($1, $2, $3, $4, $5, $6)`
+	insertSessionQuery := `INSERT INTO sessions (sessionid, userid, device, startedat, expiresat, token) VALUES ($1, $2, $3, $4, $5, $6)`
 	_, err = db.Exec(insertSessionQuery, sessionID, user.ID, device, time.Now(), expirationTime, token)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -334,7 +330,7 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec("DELETE FROM sessions WHERE session_id = $1 AND user_id = $2",
+	result, err := db.Exec("DELETE FROM sessions WHERE sessionid = $1 AND userid = $2",
 		logoutData.SessionID, userID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
@@ -443,50 +439,63 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func CurrentUser(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
-	userID, ok := r.Context().Value("user_id").(uuid.UUID)
-	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusInternalServerError)
+	// Retrieve the database connection from the request context
+	db, ok := r.Context().Value("db").(*sql.DB)
+	if !ok || db == nil {
+		http.Error(w, "Database connection not found", http.StatusInternalServerError)
 		return
 	}
 
+	// Retrieve the user ID from the request context
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		http.Error(w, "Invalid or missing user ID", http.StatusInternalServerError)
+		return
+	}
+
+	// Query user information
 	var user types.User
 	err := db.QueryRow(`
 		SELECT id, username, displayname, bio, profilepicture, isorganisation,
-			"isPrivateHearts", "isPrivate"
+		       "isPrivateHearts", "isPrivate", links
 		FROM users WHERE id = $1
 	`, userID.String()).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.Bio,
 		&user.ProfilePicture, &user.IsOrganisation,
-		&user.IsPrivateHearts, &user.IsPrivate,
+		&user.IsPrivateHearts, &user.IsPrivate, pq.Array(&user.Links),
 	)
 	if err != nil {
-		http.Error(w, "Failed to find user", http.StatusInternalServerError)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 		return
 	}
 
+	// Query user sessions
 	rows, err := db.Query(`
-		SELECT session_id, device, started_at, expires_at
-		FROM sessions WHERE user_id = $1
+		SELECT sessionid, device, startedat, expiresat
+		FROM sessions WHERE userid = $1
 	`, userID.String())
 	if err != nil {
-		http.Error(w, "Failed to retrieve sessions", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve user sessions", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	currentSessionCookie, err := r.Cookie("session_id")
-	var currentSessionID string
-	if err == nil {
+	// Get the current session ID from the session cookie (if present)
+	currentSessionID := ""
+	if currentSessionCookie, err := r.Cookie("session_id"); err == nil {
 		currentSessionID = currentSessionCookie.Value
 	}
 
+	// Process session rows
 	var sessions []map[string]interface{}
 	for rows.Next() {
 		var session types.Session
-		err := rows.Scan(&session.SessionID, &session.Device, &session.StartedAt, &session.ExpiresAt)
-		if err != nil {
-			http.Error(w, "Failed to scan session", http.StatusInternalServerError)
+		if err := rows.Scan(&session.SessionID, &session.Device, &session.StartedAt, &session.ExpiresAt); err != nil {
+			http.Error(w, "Failed to parse session data", http.StatusInternalServerError)
 			return
 		}
 
@@ -498,12 +507,12 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 			"current":    session.SessionID == currentSessionID,
 		})
 	}
-
 	if err = rows.Err(); err != nil {
-		http.Error(w, "Error iterating sessions", http.StatusInternalServerError)
+		http.Error(w, "Error iterating session rows", http.StatusInternalServerError)
 		return
 	}
 
+	// Prepare the response
 	response := map[string]interface{}{
 		"_id":             user.ID,
 		"username":        user.Username,
@@ -517,7 +526,11 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 		"sessions":        sessions,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	// Encode and write the JSON response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +559,7 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 
 	result, err := db.Exec(`
 		DELETE FROM sessions 
-		WHERE session_id = $1 AND user_id = $2
+		WHERE sessionid = $1 AND user_id = $2
 	`, sessionID.String(), userID.String())
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
