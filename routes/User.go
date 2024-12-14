@@ -133,8 +133,15 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 	if user.IsPrivate {
 		response := map[string]interface{}{
-			"message": "This account is private",
+			"username":       user.Username,
+			"displayname":    user.DisplayName,
+			"profilePicture": user.ProfilePicture,
+			"profileBanner":  user.ProfileBanner,
+			"bio":            user.Bio,
+			"followersCount": len(user.Followers),
+			"followingCount": len(user.Following),
 		}
+
 		json.NewEncoder(w).Encode(response)
 		return
 	}
@@ -488,27 +495,32 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB) // PostgreSQL connection
+	// Assuming db is the PostgreSQL connection
+	db := r.Context().Value("db").(*sql.DB)
 
 	username := r.URL.Query().Get("username")
-	action := r.URL.Query().Get("action") // Either "follow" or "unfollow"
+	action := r.URL.Query().Get("action") // This could be either "follow" or "unfollow"
 
-	encryptedUserID := r.Header.Get("X-userID")
-	if encryptedUserID == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+	// Read the encrypted userId from the request header
+	encryptedUserId := r.Header.Get("X-userID")
+	if encryptedUserId == "" {
+		http.Error(w, "userId header is required", http.StatusBadRequest)
 		return
 	}
 
-	// Decrypt user ID
-	followerID, err := middlewares.DecryptAES(encryptedUserID)
+	// Decrypt the userId (assumes DecryptAES is implemented elsewhere)
+	followerID, err := middlewares.DecryptAES(encryptedUserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
 
-	// Fetch the user to be followed/unfollowed
-	var userToBeUpdated types.User
-	err = db.QueryRowContext(r.Context(), "SELECT id, username FROM \"User\" WHERE username = $1", username).Scan(&userToBeUpdated.ID, &userToBeUpdated.Username)
+	// Retrieve the user to be followed/unfollowed from the database
+	var userToBeUpdated struct {
+		ID        string         `json:"id"`
+		Followers pq.StringArray `json:"followers"`
+	}
+	err = db.QueryRow("SELECT id, followers FROM users WHERE username = $1", username).Scan(&userToBeUpdated.ID, &userToBeUpdated.Followers)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -518,9 +530,12 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the follower user
-	var followerUser types.User
-	err = db.QueryRowContext(r.Context(), "SELECT id, username, isBanned FROM \"User\" WHERE id = $1", followerID).Scan(&followerUser.ID, &followerUser.Username, &followerUser.IsBanned)
+	// Retrieve the follower user from the database
+	var followerUser struct {
+		ID        string         `json:"id"`
+		Following pq.StringArray `json:"following"`
+	}
+	err = db.QueryRow("SELECT id, following FROM users WHERE id = $1", followerID).Scan(&followerUser.ID, &followerUser.Following)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			http.Error(w, "Follower not found", http.StatusNotFound)
@@ -531,111 +546,191 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the follower is banned
-	if followerUser.IsBanned {
-		http.Error(w, "You are banned from using the service.", http.StatusForbidden)
+	var isBanned bool
+	err = db.QueryRow("SELECT isbanned FROM users WHERE id = $1", followerID).Scan(&isBanned)
+	if err != nil {
+		http.Error(w, "Error checking user status", http.StatusInternalServerError)
+		return
+	}
+	if isBanned {
+		http.Error(w, "You are banned from following users.", http.StatusForbidden)
 		return
 	}
 
-	// Check if the follower is trying to follow themselves
+	// Check if the follower and user are the same
 	if userToBeUpdated.ID == followerUser.ID {
 		http.Error(w, "You can't follow yourself!", http.StatusBadRequest)
 		return
 	}
 
+	// Initialize followers and following lists if they are nil
+	if userToBeUpdated.Followers == nil {
+		userToBeUpdated.Followers = pq.StringArray{}
+	}
+	if followerUser.Following == nil {
+		followerUser.Following = pq.StringArray{}
+	}
+
 	// Check if the follower is already following the user
-	var isAlreadyFollowing bool
-	err = db.QueryRowContext(r.Context(), "SELECT EXISTS (SELECT 1 FROM user_follows_user WHERE follower_id = $1 AND following_id = $2)", followerID, userToBeUpdated.ID).Scan(&isAlreadyFollowing)
-	if err != nil {
-		http.Error(w, "Error checking follow status", http.StatusInternalServerError)
+	isAlreadyFollowing := false
+	for _, follower := range userToBeUpdated.Followers {
+		if follower == followerID {
+			isAlreadyFollowing = true
+			break
+		}
+	}
+
+	// Handle the action based on the request
+	if action == "follow" && isAlreadyFollowing {
+		http.Error(w, fmt.Sprintf("You are already following %s", username), http.StatusBadRequest)
 		return
 	}
 
-	// Handle follow/unfollow action
+	if action == "unfollow" && !isAlreadyFollowing {
+		http.Error(w, fmt.Sprintf("You are not following %s", username), http.StatusBadRequest)
+		return
+	}
+
+	// Define the update queries based on the action
+	var updateFollowers pq.StringArray
+	var updateFollowing pq.StringArray
+
 	if action == "follow" {
-		if isAlreadyFollowing {
-			http.Error(w, fmt.Sprintf("You are already following %s", username), http.StatusBadRequest)
-			return
-		}
-
-		// Add follower
-		_, err := db.ExecContext(r.Context(), "INSERT INTO user_follows_user (follower_id, following_id) VALUES ($1, $2)", followerID, userToBeUpdated.ID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error following user %s: %v", username, err), http.StatusInternalServerError)
-			return
-		}
-
+		updateFollowers = append(userToBeUpdated.Followers, followerID)
+		updateFollowing = append(followerUser.Following, userToBeUpdated.ID)
 	} else if action == "unfollow" {
-		if !isAlreadyFollowing {
-			http.Error(w, fmt.Sprintf("You aren't following %s", username), http.StatusBadRequest)
-			return
-		}
-
-		// Remove follower
-		_, err := db.ExecContext(r.Context(), "DELETE FROM user_follows_user WHERE follower_id = $1 AND following_id = $2", followerID, userToBeUpdated.ID)
-		if err != nil {
-			http.Error(w, fmt.Sprintf("Error unfollowing user %s: %v", username, err), http.StatusInternalServerError)
-			return
-		}
+		updateFollowers = removeFromArray(userToBeUpdated.Followers, followerID)
+		updateFollowing = removeFromArray(followerUser.Following, userToBeUpdated.ID)
 	} else {
 		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
 	}
 
-	// Success message
+	// Update the user's followers and the follower's following list in the database
+	_, err = db.Exec("UPDATE users SET followers = $1 WHERE id = $2", pq.Array(updateFollowers), userToBeUpdated.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error updating followers list for user %s: %v", username, err), http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.Exec("UPDATE users SET following = $1 WHERE id = $2", pq.Array(updateFollowing), followerUser.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", username, err), http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with success
 	actionMessage := "followed"
 	if action == "unfollow" {
 		actionMessage = "unfollowed"
 	}
-
 	successMessage := fmt.Sprintf("Successfully %s %s", actionMessage, username)
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": successMessage})
 }
 
+// Utility function to remove an element from a string array
+func removeFromArray(arr pq.StringArray, value string) pq.StringArray {
+	for i, v := range arr {
+		if v == value {
+			return append(arr[:i], arr[i+1:]...)
+		}
+	}
+	return arr
+}
+
 func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
+	// Get the PostgreSQL client from the request context
 	db := r.Context().Value("db").(*sql.DB)
 
-	// Extract user ID from the request header
-	encryptedUserID := r.Header.Get("X-userID")
-	if encryptedUserID == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+	// Retrieve the userId from header
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId header is required", http.StatusBadRequest)
 		return
 	}
-
-	// Decrypt user ID
-	userID, err := middlewares.DecryptAES(encryptedUserID)
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
 
-	// Check current privacy setting of the user
+	// Retrieve the action parameter from the query string
+	action := r.Header.Get("X-action")
+	if action == "" {
+		http.Error(w, "action parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	// Initialize a variable to hold the current privacy setting
 	var currentPrivacy bool
-	err = db.QueryRowContext(r.Context(), `SELECT isPrivate FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			http.Error(w, "User not found", http.StatusNotFound)
+
+	// Fetch the current privacy setting for the user
+	switch action {
+	case "togglePrivateHearts":
+		// Retrieve the current value of 'isPrivateHearts' from the database
+		err = db.QueryRowContext(r.Context(), `SELECT "isPrivateHearts" FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
 			return
 		}
-		http.Error(w, "Failed to retrieve user privacy setting", http.StatusInternalServerError)
+
+		// Toggle the value
+		newPrivacySetting := !currentPrivacy
+
+		// Update the 'isPrivateHearts' field in the database
+		_, err = db.ExecContext(r.Context(), `UPDATE users SET "isPrivateHearts" = $1 WHERE id = $2`, newPrivacySetting, userID)
+		if err != nil {
+			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
+			return
+		}
+
+		// Respond with the updated privacy setting
+		w.WriteHeader(http.StatusOK)
+		response := map[string]interface{}{
+			"message":            "Privacy setting updated successfully",
+			"isPrivateHeartsNow": newPrivacySetting,
+		}
+		json.NewEncoder(w).Encode(response)
+
+	case "togglePrivateAccount":
+		// Retrieve the current value of 'isPrivate' from the database
+		err = db.QueryRowContext(r.Context(), `SELECT "isPrivate" FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
+			return
+		}
+
+		// Toggle the value
+		newPrivacySetting := !currentPrivacy
+
+		// Update the 'isPrivate' field in the database
+		_, err = db.ExecContext(r.Context(), `UPDATE users SET "isPrivate" = $1 WHERE id = $2`, newPrivacySetting, userID)
+		if err != nil {
+			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
+			return
+		}
+
+		// Respond with the updated privacy setting
+		w.WriteHeader(http.StatusOK)
+		response := map[string]interface{}{
+			"message":      "Privacy setting updated successfully",
+			"isPrivateNow": newPrivacySetting,
+		}
+		json.NewEncoder(w).Encode(response)
+
+	default:
+		http.Error(w, "Invalid action parameter", http.StatusBadRequest)
 		return
 	}
-
-	// Toggle the privacy setting
-	newPrivacySetting := !currentPrivacy
-
-	// Update the privacy setting in the database
-	_, err = db.ExecContext(r.Context(), `UPDATE users SET isPrivate = $1 WHERE id = $2`, newPrivacySetting, userID)
-	if err != nil {
-		http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
-		return
-	}
-
-	// Respond with the new privacy setting status
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":    "Privacy setting updated successfully",
-		"newPrivacy": newPrivacySetting,
-	})
 }
 
 func User(r *chi.Mux) {

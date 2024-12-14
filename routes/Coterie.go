@@ -80,14 +80,13 @@ func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
 			"PostsCount":     postCount,
 		}
 
-		if coterie.Avatar != "" {
-			coterieMap["avatar"] = coterie.Avatar
+		if coterie.Avatar != nil && *coterie.Avatar != "" {
+			coterieMap["avatar"] = *coterie.Avatar
 		}
 
-		if coterie.Banner != "" {
-			coterieMap["banner"] = coterie.Banner
+		if coterie.Banner != nil && *coterie.Banner != "" {
+			coterieMap["banner"] = *coterie.Banner
 		}
-
 		result = append(result, coterieMap)
 	}
 
@@ -203,11 +202,12 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		"TotalMembers":   len(memberDetails),
 	}
 
-	if coterie.Avatar != "" {
-		result["avatar"] = coterie.Avatar
+	if coterie.Avatar != nil && *coterie.Avatar != "" {
+		result["avatar"] = *coterie.Avatar
 	}
-	if coterie.Banner != "" {
-		result["banner"] = coterie.Banner
+
+	if coterie.Banner != nil && *coterie.Banner != "" {
+		result["banner"] = *coterie.Banner
 	}
 
 	// Handle members-only action
@@ -360,9 +360,10 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*sql.DB)
 
 	title := r.Header.Get("X-name")
-	encryptedowner := r.Header.Get("X-userID")
+	encryptedOwner := r.Header.Get("X-userID")
 
-	owner, err := middlewares.DecryptAES(encryptedowner)
+	// Decrypt the user ID
+	owner, err := middlewares.DecryptAES(encryptedOwner)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
@@ -374,12 +375,14 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err = db.QueryRow("SELECT * FROM users WHERE id = $1", owner).Scan(&user)
+	// Ensure the user struct matches the correct type for the database schema
+	err = db.QueryRow("SELECT id FROM users WHERE id = $1", owner).Scan(&user.ID) // Assuming 'ID' is a string field
 	if err != nil {
 		http.Error(w, "Error checking owner existence: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Check if the user is banned
 	if user.IsBanned {
 		http.Error(w, "User is banned", http.StatusForbidden)
 		return
@@ -387,7 +390,7 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the coterie already exists
 	var existingCoterie types.Coterie
-	err = db.QueryRow("SELECT * FROM coterie WHERE name = $1", title).Scan(&existingCoterie)
+	err = db.QueryRow("SELECT name FROM coterie WHERE name = $1", title).Scan(&existingCoterie.Name)
 	if err == nil {
 		http.Error(w, "A coterie with this name already exists", http.StatusConflict)
 		return
@@ -955,15 +958,21 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Unmarshal the roles JSON into the map
+		// Check if rolesJSON is not empty and unmarshal it
 		var roles map[string][]string
-		err = json.Unmarshal(rolesJSON, &roles)
-		if err != nil {
-			http.Error(w, "Failed to unmarshal roles", http.StatusInternalServerError)
-			return
+		if len(rolesJSON) > 0 {
+			err = json.Unmarshal(rolesJSON, &roles)
+			if err != nil {
+				http.Error(w, "Failed to unmarshal roles", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			// Default empty map if roles are not provided
+			roles = make(map[string][]string)
 		}
 		coterie.Roles = roles
 
+		// Handle nullable fields like banner
 		isOwner := userID == coterie.Owner
 		isAdmin := contains(coterie.Roles["admins"], userID)
 		isModerator := contains(coterie.Roles["moderators"], userID)

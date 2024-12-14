@@ -150,14 +150,14 @@ type Session struct {
 type Coterie struct {
 	ID             string                     `bson:"id" json:"id"`
 	Name           string                     `bson:"name" json:"name"`
-	Description    string                     `bson:"description" json:"description"`
+	Description    *string                    `bson:"description" json:"description"`
 	Members        []string                   `bson:"members" json:"members"`
 	Owner          string                     `bson:"owner" json:"owner"`
 	OwnerUsername  string                     `json:"ownerUsername,omitempty"`
 	IsOrganisation bool                       `json:"isOrganisation"`
 	CreatedAt      time.Time                  `bson:"createdAt" json:"createdAt"`
-	Banner         string                     `bson:"banner" json:"banner,omitempty"`
-	Avatar         string                     `bson:"avatar" json:"avatar,omitempty"`
+	Banner         *string                    `bson:"banner" json:"banner,omitempty"`
+	Avatar         *string                    `bson:"avatar" json:"avatar,omitempty"`
 	IsChatAllowed  bool                       `bson:"isChatAllowed" json:"isChatAllowed"`
 	IsVerified     bool                       `json:"isVerified"`
 	TotalPosts     int                        `json:"totalPosts,omitempty"`

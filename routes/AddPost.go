@@ -106,7 +106,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the user exists and is not banned
 	var isBanned bool
-	err = db.QueryRow("SELECT isBanned FROM \"User\" WHERE id = $1", userID).Scan(&isBanned)
+	err = db.QueryRow("SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return

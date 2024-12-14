@@ -16,7 +16,7 @@ import (
 
 // getReporterUsername fetches the reporter's username from the database
 func getReporterUsername(ctx context.Context, db *sql.DB, reporterID string) (string, error) {
-	query := "SELECT username FROM \"User\" WHERE id = $1"
+	query := "SELECT username FROM users WHERE id = $1"
 	var username string
 	err := db.QueryRowContext(ctx, query, reporterID).Scan(&username)
 	if err != nil {
