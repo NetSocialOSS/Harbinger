@@ -457,34 +457,53 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Prepare update fields
-	updateFields := make(map[string]interface{})
-	decodeAndAddField := func(param string, field string) {
-		if value := r.URL.Query().Get(param); value != "" {
-			decoded, err := url.QueryUnescape(value)
-			if err == nil {
-				updateFields[field] = decoded
-			}
+	var displayName, bio, profilePicture, profileBanner *string
+	var links []string
+
+	if value := r.URL.Query().Get("displayName"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			displayName = &decoded
 		}
 	}
-
-	decodeAndAddField("displayName", "displayName")
-	decodeAndAddField("bio", "bio")
-	decodeAndAddField("profilePicture", "profilePicture")
-	decodeAndAddField("profileBanner", "profileBanner")
-
-	if links := r.URL.Query().Get("links"); links != "" {
-		decodedLinks, err := url.QueryUnescape(links)
+	if value := r.URL.Query().Get("bio"); value != "" {
+		decoded, err := url.QueryUnescape(value)
 		if err == nil {
-			updateFields["links"] = strings.Split(decodedLinks, ",")
+			bio = &decoded
+		}
+	}
+	if value := r.URL.Query().Get("profilePicture"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			profilePicture = &decoded
+		}
+	}
+	if value := r.URL.Query().Get("profileBanner"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			profileBanner = &decoded
+		}
+	}
+	if linksParam := r.URL.Query().Get("links"); linksParam != "" {
+		decodedLinks, err := url.QueryUnescape(linksParam)
+		if err == nil {
+			links = strings.Split(decodedLinks, ",")
 		}
 	}
 
 	// Perform update operation
-	query := `UPDATE users SET displayName = COALESCE($1, displayName), bio = COALESCE($2, bio), profilePicture = COALESCE($3, profilePicture), profileBanner = COALESCE($4, profileBanner), links = COALESCE($5, links) WHERE id = $6`
-	_, err = db.ExecContext(r.Context(), query,
-		updateFields["displayName"], updateFields["bio"], updateFields["profilePicture"], updateFields["profileBanner"], updateFields["links"], userID)
+	query := `
+		UPDATE users 
+		SET 
+			displayName = COALESCE($1, displayName), 
+			bio = COALESCE($2, bio), 
+			profilePicture = COALESCE($3, profilePicture), 
+			profileBanner = COALESCE($4, profileBanner), 
+			links = COALESCE($5, links) 
+		WHERE id = $6`
+	_, err = db.ExecContext(r.Context(), query, displayName, bio, profilePicture, profileBanner, pq.Array(links), userID)
 	if err != nil {
-		http.Error(w, "Failed to update user profile", http.StatusInternalServerError)
+		http.Error(w, "Failed to update user profile: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
