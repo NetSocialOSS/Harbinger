@@ -21,18 +21,25 @@ import (
 )
 
 func deleteAccount(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB) // PostgreSQL connection
 
-	encrypteduserId := r.Header.Get("X-userID")
-	if encrypteduserId == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+	var requestPayload struct {
+		UserId string `json:"userId"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	userId, err := middlewares.DecryptAES(encrypteduserId)
+
+	// Decrypt the userId (if necessary)
+	userId, err := middlewares.DecryptAES(requestPayload.UserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
+
+	// Database connection
+	db := r.Context().Value("db").(*sql.DB)
 
 	// Retrieve user details
 	var user types.User
