@@ -90,9 +90,9 @@ type Author struct {
 
 type NewComment struct {
 	ID        string    `bson:"ID" json:"ID"`
-	Content   string    `bson:"content" json:"content"`
-	Author    string    `bson:"author" json:"-"`
-	CreatedAt time.Time `json:"createdAt"`
+	Content   string    `bson:"content" json:"Content"`
+	Author    string    `bson:"author" json:"Author"`
+	CreatedAt time.Time `json:"CreatedAt"`
 }
 
 type Comment struct {

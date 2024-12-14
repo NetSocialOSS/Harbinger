@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"time"
 
@@ -22,7 +21,6 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
-
 	postID := r.Header.Get("X-id")
 	content := r.Header.Get("X-content")
 	encryptedauthorID := r.Header.Get("X-userID")
@@ -50,7 +48,6 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now(),
 	}
 
-	// Verify that the author exists
 	var author types.User
 	err = db.QueryRowContext(context.Background(), `SELECT id, isBanned FROM users WHERE id = $1`, authorID).Scan(&author.ID, &author.IsBanned)
 	if err != nil {
@@ -58,7 +55,6 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Author not found"}`, http.StatusBadRequest)
 			return
 		}
-		log.Printf("Error finding author: %v", err)
 		http.Error(w, `{"error": "Failed to verify author"}`, http.StatusInternalServerError)
 		return
 	}
@@ -68,18 +64,52 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.ExecContext(context.Background(), `
-		UPDATE "Post"
-		SET comments = array_append(comments, $1)
-		WHERE id = $2
-	`, comment, postID)
+	// Serialize the comment to JSON
+	commentJSON, err := json.Marshal(comment)
 	if err != nil {
-		log.Printf("Error updating post: %v", err)
+		return
+	}
+
+	// Retrieve the current comments for the post as raw JSON bytes
+	var currentCommentsBytes []byte
+	err = db.QueryRowContext(context.Background(), `SELECT comments FROM post WHERE id = $1`, postID).Scan(&currentCommentsBytes)
+	if err != nil && err != sql.ErrNoRows {
+		http.Error(w, `{"error": "Failed to retrieve current comments"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Unmarshal the current comments bytes into a slice of json.RawMessage
+	var currentComments []json.RawMessage
+	if len(currentCommentsBytes) > 0 {
+		err = json.Unmarshal(currentCommentsBytes, &currentComments)
+		if err != nil {
+			http.Error(w, `{"error": "Failed to unmarshal current comments"}`, http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Append the new comment to the existing comments
+	currentComments = append(currentComments, commentJSON)
+
+	// Update the post with the new comment
+	updatedCommentsJSON, err := json.Marshal(currentComments)
+	if err != nil {
+		http.Error(w, `{"error": "Failed to serialize updated comments"}`, http.StatusInternalServerError)
+		return
+	}
+
+	_, err = db.ExecContext(context.Background(), `
+		UPDATE post
+		SET comments = $1
+		WHERE id = $2
+	`, updatedCommentsJSON, postID)
+	if err != nil {
 		http.Error(w, `{"error": "Failed to add comment to post"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Respond with the updated post (For now, just return the new comment)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(comment)
+	if err := json.NewEncoder(w).Encode(comment); err != nil {
+		http.Error(w, `{"error": "Failed to encode response"}`, http.StatusInternalServerError)
+	}
 }
