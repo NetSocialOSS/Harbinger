@@ -1,23 +1,28 @@
 package database
 
 import (
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"database/sql"
+
+	_ "github.com/lib/pq"
 )
 
-func Connect(url string) (*mongo.Client, error) {
-	clientOptions := options.Client().ApplyURI(url)
-	client, err := mongo.Connect(nil, clientOptions)
+func Connect(url string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", url)
 	if err != nil {
 		return nil, err
 	}
 
-	return client, nil
+	err = db.Ping()
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
 }
 
-func Disconnect(client *mongo.Client) error {
-	err := client.Disconnect(nil)
-	if err != nil {
+func Disconnect(db *sql.DB) error {
+	if err := db.Close(); err != nil {
 		return err
 	}
 	return nil

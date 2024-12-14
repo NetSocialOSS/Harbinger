@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,12 +11,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 func ManageBadge(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -42,17 +40,15 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the mod is an owner or moderator
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"id": modID}
-	var modUser types.User
-	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
+	var isOwner, isModerator, isDeveloper bool
+	err = db.QueryRow("SELECT isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator, &isDeveloper)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Check if the mod has permission to manage
-	if !modUser.IsOwner && !modUser.IsModerator && !modUser.IsDeveloper {
+	if !isOwner && !isModerator && !isDeveloper {
 		http.Error(w, `{"error": "Permission denied. Only owners, moderators, or developers can manage badges."}`, http.StatusForbidden)
 		return
 	}
@@ -61,28 +57,28 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	switch entity {
 	case "user":
 		// Manage badge for user
-		userFilter := bson.M{"username": username}
 		var user types.User
-		err := usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
+		err := db.QueryRow("SELECT * FROM users WHERE username = $1", username).Scan(
+			&user.Username,
+		)
 		if err != nil {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 			return
 		}
 
 		// Update the user's badge based on action
-		update := bson.M{}
+		var query string
 		switch action {
 		case "add":
-			update = handleBadgeUpdateForUser(user, badge, true)
+			query = fmt.Sprintf("UPDATE users SET %s = true WHERE username = $1", getBadgeColumn(badge))
 		case "remove":
-			update = handleBadgeUpdateForUser(user, badge, false)
+			query = fmt.Sprintf("UPDATE users SET %s = false WHERE username = $1", getBadgeColumn(badge))
 		default:
 			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
 			return
 		}
 
-		// Apply the update to the user
-		_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
+		_, err = db.Exec(query, username)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
 			return
@@ -95,32 +91,28 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 
 	case "coterie":
 		// Manage badge for coterie
+		// Note: As the coterie table structure wasn't provided, this part remains conceptual
 		coterieName := r.Header.Get("X-username")
-		coteriesCollection := db.Database("SocialFlux").Collection("coterie")
-		coterieFilter := bson.M{"name": coterieName}
-		var coterie types.Coterie
-		err := coteriesCollection.FindOne(context.Background(), coterieFilter).Decode(&coterie)
-		if err != nil {
-			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
-			return
-		}
-
-		// Update the coterie's badge based on action
-		update := bson.M{}
+		var query string
 		switch action {
 		case "add":
-			update = handleBadgeUpdateForCoterie(coterie, badge, true)
+			query = "UPDATE coterie SET isorganisation = true WHERE name = $1"
 		case "remove":
-			update = handleBadgeUpdateForCoterie(coterie, badge, false)
+			query = "UPDATE coterie SET isorganisation = false WHERE name = $1"
 		default:
 			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
 			return
 		}
 
-		// Apply the update to the coterie
-		_, err = coteriesCollection.UpdateOne(context.Background(), coterieFilter, bson.M{"$set": update})
+		result, err := db.Exec(query, coterieName)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update coterie badges"}`, http.StatusInternalServerError)
+			return
+		}
+
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 			return
 		}
 
@@ -134,36 +126,25 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleBadgeUpdateForUser(user types.User, badge string, add bool) bson.M {
+func getBadgeColumn(badge string) string {
 	switch badge {
 	case "dev":
-		return bson.M{"isDeveloper": add}
+		return "isdeveloper"
 	case "verified":
-		return bson.M{"isVerified": add}
+		return "isverified"
 	case "partner":
-		return bson.M{"isPartner": add}
+		return "ispartner"
 	case "owner":
-		return bson.M{"isOwner": add}
+		return "isowner"
 	case "moderator":
-		return bson.M{"isModerator": add}
+		return "ismoderator"
 	default:
-		return bson.M{}
-	}
-}
-
-func handleBadgeUpdateForCoterie(coterie types.Coterie, badge string, add bool) bson.M {
-	switch badge {
-	case "organisation":
-		return bson.M{"isOrganisation": add}
-	case "verified":
-		return bson.M{"isVerified": add}
-	default:
-		return bson.M{}
+		return ""
 	}
 }
 
 func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -185,31 +166,28 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the mod is an owner
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"id": modID}
-	var modUser types.User
-	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
+	// Check if the mod is an owner or moderator
+	var isOwner, isModerator bool
+	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Check if the user has permission
-	if !modUser.IsOwner && !modUser.IsModerator {
+	if !isOwner && !isModerator {
 		http.Error(w, `{"error": "Permission denied. Only owners and moderators can delete posts."}`, http.StatusForbidden)
 		return
 	}
 
 	// Delete the post from the database
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-	deleteFilter := bson.M{"id": postID}
-	result, err := postsCollection.DeleteOne(context.Background(), deleteFilter)
+	result, err := db.Exec("DELETE FROM post WHERE id = $1", postID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
 		return
 	}
-	if result.DeletedCount == 0 {
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
 		http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
 		return
 	}
@@ -221,7 +199,7 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -243,31 +221,29 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the mod is an owner
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"id": modID}
-	var modUser types.User
-	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
+	// Check if the mod is an owner or moderator
+	var isOwner, isModerator bool
+	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Check if the user has permission
-	if !modUser.IsOwner && !modUser.IsModerator {
+	if !isOwner && !isModerator {
 		http.Error(w, `{"error": "Permission denied. Only owners and moderators can delete coteries."}`, http.StatusForbidden)
 		return
 	}
 
 	// Delete the coterie from the database
-	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
-	deleteFilter := bson.M{"name": coterieName}
-	result, err := coteriesCollection.DeleteOne(context.Background(), deleteFilter)
+	// Note: As the coterie table structure wasn't provided, this part remains conceptual
+	result, err := db.Exec("DELETE FROM coterie WHERE name = $1", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete coterie"}`, http.StatusInternalServerError)
 		return
 	}
-	if result.DeletedCount == 0 {
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
 		http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 		return
 	}
@@ -279,7 +255,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func ManageUser(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -302,47 +278,40 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the mod is an owner
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	modFilter := bson.M{"id": modID}
-	var modUser types.User
-	err = usersCollection.FindOne(context.Background(), modFilter).Decode(&modUser)
+	// Check if the mod is an owner or moderator
+	var isOwner, isModerator bool
+	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
 	}
 
 	// Check if the user has permission
-	if !modUser.IsOwner && !modUser.IsModerator {
+	if !isOwner && !isModerator {
 		http.Error(w, `{"error": "Permission denied. Only owners and moderators can manage users."}`, http.StatusForbidden)
 		return
 	}
 
-	// Find the user by username
-	userFilter := bson.M{"username": username}
-	var user types.User
-	err = usersCollection.FindOne(context.Background(), userFilter).Decode(&user)
-	if err != nil {
-		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
-		return
-	}
-
 	// Update the user's ban status based on action
-	update := bson.M{}
+	var query string
 	switch action {
 	case "ban":
-		update = bson.M{"isBanned": true}
+		query = "UPDATE users SET isbanned = true WHERE username = $1"
 	case "unban":
-		update = bson.M{"isBanned": false}
+		query = "UPDATE users SET isbanned = false WHERE username = $1"
 	default:
 		http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Apply the update to the user
-	_, err = usersCollection.UpdateOne(context.Background(), userFilter, bson.M{"$set": update})
+	result, err := db.Exec(query, username)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to update user status"}`, http.StatusInternalServerError)
+		return
+	}
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 		return
 	}
 

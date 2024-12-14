@@ -1,7 +1,8 @@
 package routes
 
 import (
-	"context"
+	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -9,15 +10,12 @@ import (
 	"time"
 
 	"netsocial/middlewares"
-	"netsocial/types"
 
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/lib/pq"
 )
 
-func generateUniqueID(collection *mongo.Collection) (string, error) {
+func generateUniqueID(db *sql.DB) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -28,8 +26,9 @@ func generateUniqueID(collection *mongo.Collection) (string, error) {
 		}
 		id := string(b)
 
-		// Check if the ID already exists
-		count, err := collection.CountDocuments(context.Background(), bson.M{"_id": id})
+		// Check if the ID already exists in PostgreSQL
+		var count int
+		err := db.QueryRow("SELECT COUNT(*) FROM post WHERE id = $1", id).Scan(&count)
 		if err != nil {
 			return "", err
 		}
@@ -40,19 +39,15 @@ func generateUniqueID(collection *mongo.Collection) (string, error) {
 }
 
 func AddPost(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 	if db == nil {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	coteriesCollection := db.Database("SocialFlux").Collection("coterie")
-
 	title := r.URL.Query().Get("title")
 	content := r.URL.Query().Get("content")
-	encrypteduserId := r.Header.Get("X-userID")
+	encryptedUserID := r.Header.Get("X-userID")
 	image := r.Header.Get("X-image")
 	coterieName := r.Header.Get("X-coterie")
 	scheduledForStr := r.Header.Get("X-scheduledFor")
@@ -62,7 +57,6 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	indexing := false
 
 	if indexingStr != "" {
-		// Validate the X-indexing header, must be "true" or "false"
 		if indexingStr == "true" {
 			indexing = true
 		} else if indexingStr == "false" {
@@ -73,9 +67,9 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	userId, err := middlewares.DecryptAES(encrypteduserId)
+	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
 		return
 	}
 
@@ -98,44 +92,43 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Remaining validation...
-	if title == "" || content == "" || userId == "" {
+	if title == "" || content == "" || userID == "" {
 		http.Error(w, "Title, content, and user ID are required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate the userId as a UUID
-	_, err = uuid.Parse(userId)
+	// Validate the user ID as a UUID
+	_, err = uuid.Parse(userID)
 	if err != nil {
 		http.Error(w, "Invalid user ID.", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the user exists and if they are banned
-	var user types.User
-	err = usersCollection.FindOne(r.Context(), bson.M{"id": userId}).Decode(&user)
+	// Check if the user exists and is not banned
+	var isBanned bool
+	err = db.QueryRow("SELECT isBanned FROM \"User\" WHERE id = $1", userID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return
 	}
 
-	if user.IsBanned {
+	if isBanned {
 		http.Error(w, "You are banned from using NetSocial's services.", http.StatusForbidden)
 		return
 	}
 
 	// Validate coterie membership
 	if coterieName != "" {
-		var coterie types.Coterie
-		err = coteriesCollection.FindOne(r.Context(), bson.M{"name": coterieName}).Decode(&coterie)
+		var members []string
+		err = db.QueryRow("SELECT members FROM coterie WHERE name = $1", coterieName).Scan(&members)
 		if err != nil {
 			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
 			return
 		}
 
 		isMember := false
-		for _, memberID := range coterie.Members {
-			if memberID == userId {
+		for _, memberID := range members {
+			if memberID == userID {
 				isMember = true
 				break
 			}
@@ -148,7 +141,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate a unique post ID
-	postID, err := generateUniqueID(postsCollection)
+	postID, err := generateUniqueID(db)
 	if err != nil {
 		http.Error(w, "Failed to generate unique post ID", http.StatusInternalServerError)
 		return
@@ -165,76 +158,66 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process poll options only if valid options exist
-	var poll bson.M
-	if len(validOptions) > 0 {
-		var pollOptions []bson.M
-		for _, option := range validOptions {
-			optionID := primitive.NewObjectID()
-			pollOptions = append(pollOptions, bson.M{
-				"_id":   optionID,
-				"name":  option,
-				"votes": []string{},
-			})
-		}
-		optionID := primitive.NewObjectID()
-		// Construct the poll object
-		poll = bson.M{
+	var pollJSON []byte
+	if optionsStr != "" {
+		options := strings.Split(optionsStr, ",")
+		validOptions := []map[string]interface{}{}
 
-			"_id":        optionID,
-			"options":    pollOptions,
-			"createdAt":  time.Now(),
-			"expiration": time.Time{}, // Default to zero value if not specified
-		}
-
-		// Only parse expiration if it is provided
-		if expirationStr != "" {
-			expirationTime, err := time.Parse(time.RFC3339, expirationStr)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Invalid expiration date format. Use RFC3339 format. Received: %s", expirationStr), http.StatusBadRequest)
-				return
+		for _, option := range options {
+			trimmedOption := strings.TrimSpace(option)
+			if trimmedOption != "" {
+				validOptions = append(validOptions, map[string]interface{}{
+					"id":    uuid.New().String(),
+					"name":  trimmedOption,
+					"votes": []string{},
+				})
 			}
-			poll["expiration"] = expirationTime // Set the parsed expiration time
 		}
-	}
 
-	// Create the post document
-	post := bson.M{
-		"_id":       postID,
-		"title":     title,
-		"content":   content,
-		"author":    userId,
-		"hearts":    []string{},
-		"isIndexed": indexing,
-		"createdAt": time.Now(),
-	}
+		if len(validOptions) < 2 || len(validOptions) > 4 {
+			http.Error(w, "Please provide between 2 and 4 poll options", http.StatusBadRequest)
+			return
+		}
 
-	if coterieName != "" {
-		post["coterie"] = coterieName
-	}
+		poll := map[string]interface{}{
+			"id":        uuid.New().String(),
+			"options":   validOptions,
+			"createdAt": time.Now(),
+			"expiration": func() time.Time {
+				if expirationStr != "" {
+					expirationTime, err := time.Parse(time.RFC3339, expirationStr)
+					if err == nil {
+						return expirationTime
+					}
+				}
+				return time.Time{}
+			}(),
+		}
 
-	if !scheduledFor.IsZero() {
-		post["scheduledFor"] = scheduledFor
+		pollJSON, err = json.Marshal(poll)
+		if err != nil {
+			http.Error(w, "Failed to process poll options", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Add the Image field only if image URLs are provided
+	var images []string
 	if image != "" {
-		imageArray := strings.FieldsFunc(image, func(r rune) bool {
-			return r == ','
-		})
-		post["image"] = imageArray
+		images = strings.Split(image, ",")
 	}
 
-	// Include the poll in the post if it exists
-	if poll != nil {
-		post["poll"] = []bson.M{poll}
-	}
-
-	_, err = postsCollection.InsertOne(r.Context(), post)
+	// Insert the post into PostgreSQL
+	query := `
+		INSERT INTO post (id, title, content, author, isIndexed, createdAt, coterie, scheduledFor, image, poll)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`
+	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), string(pollJSON))
 	if err != nil {
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprint(w, `{"message": "Post successfully created!", "postId": "`+postID+`"}`)
+	fmt.Fprintf(w, `{"message": "Post successfully created!", "postId": "%s"}`, postID)
 }

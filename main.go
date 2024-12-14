@@ -30,12 +30,6 @@ func main() {
 		log.Fatal("DATABASE_URL environment variable not set")
 	}
 
-	// Additional environment variables (if needed)
-	discordWebhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
-	if discordWebhookURL == "" {
-		log.Println("DISCORD_WEBHOOK_URL environment variable not set")
-	}
-
 	// Create a new Chi router
 	r := chi.NewRouter()
 
@@ -60,7 +54,11 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to connect to database:", err)
 	}
-	defer db.Disconnect(nil)
+	defer func() {
+		if err := database.Disconnect(db); err != nil {
+			log.Println("Error closing database connection:", err)
+		}
+	}()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r = r.WithContext(context.WithValue(r.Context(), "db", db))

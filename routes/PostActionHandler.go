@@ -1,18 +1,16 @@
 package routes
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
 	"time"
 
+	"database/sql"
+
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	_ "github.com/lib/pq"
 )
 
 func PostActions(w http.ResponseWriter, r *http.Request) {
@@ -26,6 +24,7 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Decrypt the user ID
 	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to decrypt userid"}`, http.StatusBadRequest)
@@ -37,119 +36,107 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	// Database connection
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
-	usersCollection := db.Database("SocialFlux").Collection("users")
+	// Fetch user details
 	var user types.User
-	err = usersCollection.FindOne(context.Background(), bson.M{"id": userID}).Decode(&user)
+	err = db.QueryRowContext(r.Context(), `SELECT * FROM users WHERE id = $1`, userID).Scan(
+		&user.ID)
+
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch user details"}`, http.StatusInternalServerError)
 		return
 	}
+
 	if user.IsBanned {
 		http.Error(w, `{"error": "You are banned from using NetSocial's services."}`, http.StatusForbidden)
 		return
 	}
 
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-	filter := bson.M{"_id": postId}
-
-	switch action {
-	case "like", "unlike":
-		var update bson.M
+	// Handle "like" and "unlike"
+	if action == "like" || action == "unlike" {
+		var query string
 		if action == "like" {
-			update = bson.M{"$addToSet": bson.M{"hearts": userID}}
+			query = `UPDATE post SET hearts = hearts || $1 WHERE id = $2`
 		} else {
-			update = bson.M{"$pull": bson.M{"hearts": userID}}
+			query = `UPDATE post SET hearts = array_remove(hearts, $1) WHERE id = $2`
 		}
-		_, err = postsCollection.UpdateOne(context.Background(), filter, update)
+
+		_, err = db.ExecContext(r.Context(), query, userID, postId)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update post"}`, http.StatusInternalServerError)
 			return
 		}
+
 		message := "Post liked successfully"
 		if action == "unlike" {
 			message = "Post unliked successfully"
 		}
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": message})
 		return
+	}
 
-	case "vote":
+	// Handle "vote"
+	if action == "vote" {
 		if optionId == "" {
 			http.Error(w, `{"error": "Option ID is required for voting"}`, http.StatusBadRequest)
 			return
 		}
 
-		var post types.Post
-		err = postsCollection.FindOne(context.Background(), filter).Decode(&post)
+		// Check if the poll exists in the post
+		var pollJSON json.RawMessage
+		err := db.QueryRowContext(r.Context(), `SELECT poll FROM post WHERE id = $1`, postId).Scan(&pollJSON)
 		if err != nil {
 			http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
 			return
 		}
 
-		if len(post.Poll) == 0 {
+		// Check if the poll is expired or the user already voted
+		var poll types.Poll
+		err = json.Unmarshal(pollJSON, &poll)
+		if err != nil || len(poll.Options) == 0 {
 			http.Error(w, `{"error": "No poll found for this post"}`, http.StatusNotFound)
 			return
 		}
 
-		poll := post.Poll[0]
+		// Check if poll is expired
 		if poll.Expiration.Before(time.Now()) {
 			http.Error(w, `{"error": "Poll has expired"}`, http.StatusForbidden)
 			return
 		}
 
-		optionObjID, err := primitive.ObjectIDFromHex(optionId)
-		if err != nil {
-			http.Error(w, `{"error": "Invalid option ID"}`, http.StatusBadRequest)
+		// Ensure user hasn't already voted
+		var alreadyVoted bool
+		err = db.QueryRowContext(r.Context(), `
+			SELECT EXISTS (
+					SELECT 1 FROM unnest(poll->'options'->0->'votes') AS votes WHERE votes = $1
+			)`, userID).Scan(&alreadyVoted)
+
+		if alreadyVoted {
+			http.Error(w, `{"error": "You have already voted in this poll"}`, http.StatusForbidden)
 			return
 		}
 
-		var targetOption *types.Options
-		for i := range poll.Options {
-			if poll.Options[i].ID == optionObjID {
-				targetOption = &poll.Options[i]
-				break
-			}
-		}
-
-		if targetOption == nil {
-			http.Error(w, `{"error": "Option not found in the poll"}`, http.StatusNotFound)
-			return
-		}
-
-		for _, option := range poll.Options {
-			for _, voter := range option.Votes {
-				if voter == userID {
-					http.Error(w, `{"error": "You have already voted in this poll"}`, http.StatusForbidden)
-					return
-				}
-			}
-		}
-
-		update := bson.M{
-			"$addToSet": bson.M{"poll.0.options.$[option].votes": userID},
-		}
-		arrayFilters := options.Update().SetArrayFilters(options.ArrayFilters{
-			Filters: []interface{}{
-				bson.M{"option._id": optionObjID},
-			},
-		})
-
-		result, err := postsCollection.UpdateOne(context.Background(), filter, update, arrayFilters)
+		// Update vote in the poll
+		_, err = db.ExecContext(r.Context(), `
+			UPDATE post 
+			SET poll = jsonb_set(
+					poll, 
+					'{options, 0, votes}', 
+					(jsonb_array_append(poll->'options'->0->'votes', to_jsonb($1))) 
+			)
+			WHERE id = $2`, userID, postId)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to cast vote"}`, http.StatusInternalServerError)
 			return
 		}
 
-		if result.ModifiedCount == 0 {
-			http.Error(w, `{"error": "No changes made. Possible duplicate vote or option not found."}`, http.StatusBadRequest)
-			return
-		}
-
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Vote cast successfully"})
 	}
+
 }

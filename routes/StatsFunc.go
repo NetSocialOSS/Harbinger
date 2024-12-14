@@ -2,34 +2,29 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"netsocial/middlewares"
 
 	"github.com/go-chi/chi/v5"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// getCount retrieves the count of documents from the specified collection
-func getCount(w http.ResponseWriter, r *http.Request, collectionName string, fieldName string) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+// getCount retrieves the count of records from the specified table
+func getCount(w http.ResponseWriter, r *http.Request, tableName string, fieldName string) {
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	collection := db.Database("SocialFlux").Collection(collectionName)
-
-	countOptions := options.Count()
-	total, err := collection.CountDocuments(context.Background(), bson.M{}, countOptions)
-	if err != nil {
-		http.Error(w, "Error counting documents", http.StatusInternalServerError)
+	query := "SELECT COUNT(*) FROM \"" + tableName + "\""
+	var total int
+	if err := db.QueryRowContext(context.Background(), query).Scan(&total); err != nil {
+		http.Error(w, "Error counting records", http.StatusInternalServerError)
 		return
 	}
 
-	// Return the total count as JSON
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{fieldName: total})
 }
@@ -41,12 +36,12 @@ func RegistergedUserNum(w http.ResponseWriter, r *http.Request) {
 
 // TotalPartnersCount retrieves the count of partners
 func TotalPartnersCount(w http.ResponseWriter, r *http.Request) {
-	getCount(w, r, "partners", "total_partners")
+	getCount(w, r, "partner", "total_partners")
 }
 
 // TotalPostsCount retrieves the count of posts
 func TotalPostsCount(w http.ResponseWriter, r *http.Request) {
-	getCount(w, r, "posts", "total_posts")
+	getCount(w, r, "post", "total_posts")
 }
 
 // TotalCoterieCount retrieves the count of coteries

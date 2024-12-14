@@ -2,72 +2,63 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"netsocial/middlewares"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
+	_ "github.com/lib/pq"
 )
 
-// DeletePost handles the deletion of a post by its ID and author's UUID
+// DeletePost handles the deletion of a post
 func DeletePost(w http.ResponseWriter, r *http.Request) {
-	// Get the database connection from the context
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Get the posts collection
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-
-	// Extract post ID and author ID from headers
 	postID := r.Header.Get("X-postid")
-	encryptedauthorID := r.Header.Get("X-userID")
+	encryptedAuthorID := r.Header.Get("X-userID")
 
-	authorID, err := middlewares.DecryptAES(encryptedauthorID)
+	authorID, err := middlewares.DecryptAES(encryptedAuthorID)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Validate that the IDs are not empty
-	if postID == "" || encryptedauthorID == "" {
+	if postID == "" || encryptedAuthorID == "" {
 		http.Error(w, `{"error": "Post ID or Author ID is missing"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Create a filter for deleting the post
-	filter := bson.M{
-		"_id":    postID,
-		"author": authorID, // No conversion needed for UUID
-	}
+	query := `DELETE FROM Post WHERE id = $1 AND author = $2`
 
-	// Set a context with a timeout for the delete operation
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	// Perform the delete operation
-	result, err := postsCollection.DeleteOne(ctx, filter)
+	result, err := db.ExecContext(ctx, query, postID, authorID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Check if a post was deleted
-	if result.DeletedCount == 0 {
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, `{"error": "Failed to determine deletion status"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
 		http.Error(w, `{"error": "Post not found or you are not the author"}`, http.StatusNotFound)
 		return
 	}
 
-	// Construct response
 	response := map[string]string{
 		"message": "Post deleted successfully",
 	}
 
-	// Send JSON response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, `{"error": "Failed to encode response"}`, http.StatusInternalServerError)
