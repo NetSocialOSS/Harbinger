@@ -1,13 +1,12 @@
 package routes
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
 	"time"
-
-	"database/sql"
 
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
@@ -24,7 +23,6 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt the user ID
 	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to decrypt userid"}`, http.StatusBadRequest)
@@ -36,16 +34,14 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Database connection
 	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Fetch user details
 	var user types.User
-	err = db.QueryRowContext(r.Context(), `SELECT * FROM users WHERE id = $1`, userID).Scan(
+	err = db.QueryRowContext(r.Context(), `SELECT isbanned FROM users WHERE id = $1`, userID).Scan(
 		&user.ID)
 
 	if err != nil {
@@ -62,7 +58,7 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 	if action == "like" || action == "unlike" {
 		var query string
 		if action == "like" {
-			query = `UPDATE post SET hearts = hearts || $1 WHERE id = $2`
+			query = `UPDATE post SET hearts = hearts || array[$1] WHERE id = $2`
 		} else {
 			query = `UPDATE post SET hearts = array_remove(hearts, $1) WHERE id = $2`
 		}
@@ -138,5 +134,4 @@ func PostActions(w http.ResponseWriter, r *http.Request) {
 
 		json.NewEncoder(w).Encode(map[string]interface{}{"message": "Vote cast successfully"})
 	}
-
 }
