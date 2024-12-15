@@ -824,7 +824,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch post details
 	var postCoterie string
-	err = db.QueryRow(`SELECT coterie FROM posts WHERE id = $1`, postIDStr).Scan(&postCoterie)
+	err = db.QueryRow(`SELECT coterie FROM post WHERE id = $1`, postIDStr).Scan(&postCoterie)
 	if err != nil {
 		http.Error(w, "Post not found", http.StatusNotFound)
 		return
@@ -861,7 +861,7 @@ func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove the post from the posts table
-	_, err = db.Exec(`DELETE FROM posts WHERE id = $1`, postIDStr)
+	_, err = db.Exec(`DELETE FROM post WHERE id = $1`, postIDStr)
 	if err != nil {
 		http.Error(w, "Error removing post", http.StatusInternalServerError)
 		return
