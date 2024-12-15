@@ -227,13 +227,8 @@ type LinkPreview struct {
 type Config struct {
 	ApiVersion string `json:"apiVersion"`
 	Database   `json:"database"`
-	Web        `json:"web"`
 }
 
 type Database struct {
 	Url string `json:"url"`
-}
-
-type Web struct {
-	Port string `json:"port"`
 }

@@ -109,7 +109,7 @@ func main() {
 	r.NotFound(NotFoundHandler)
 
 	// Listen and serve
-	port := configuration.GetConfig().Web.Port
+	port := os.Getenv("PORT")
 	log.Fatal(http.ListenAndServe(":"+port, r))
 }
 
