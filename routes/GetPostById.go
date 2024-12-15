@@ -1,7 +1,7 @@
 package routes
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -12,43 +12,37 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/lib/pq"
 )
 
-// Function to handle fetching a single post by ID
+// Function to handle fetching a single post by ID from PostgreSQL
 func GetPostById(w http.ResponseWriter, r *http.Request) {
-	// Get the post ID from the URL parameter
 	postID := chi.URLParam(r, "id")
 
-	// Access MongoDB client from context
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	// Access MongoDB collection for posts
-	postsCollection := db.Database("SocialFlux").Collection("posts")
+	var scheduledFor sql.NullTime
+	var image pq.StringArray
+	var coterie sql.NullString
+	var hearts pq.StringArray
+	var comments json.RawMessage
+	var poll sql.NullString
 
-	// Define options to customize the query
-	opts := options.FindOne().SetProjection(bson.M{
-		"title":     1,
-		"content":   1,
-		"author":    1,
-		"createdAt": 1,
-		"poll":      1,
-		"hearts":    1,
-		"image":     1, // Updated field to "image"
-		"comments":  1, // Fetch all comments
-	})
-
-	// Find the post by its ID
 	var post types.Post
+	query := `
+			SELECT id, author, title, content, coterie, scheduledFor, image, poll, createdAt, hearts, comments
+			FROM Post WHERE id = $1`
+	err := db.QueryRow(query, postID).Scan(
+		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
+		&poll, &post.CreatedAt, &hearts, &comments)
 
-	if err := postsCollection.FindOne(context.Background(), bson.M{"_id": postID}, opts).Decode(&post); err != nil {
-		if err == mongo.ErrNoDocuments {
+	// Handle error if the query fails
+	if err != nil {
+		if err == sql.ErrNoRows {
 			http.Error(w, "Post not found", http.StatusNotFound)
 			return
 		}
@@ -56,31 +50,99 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch author details from the users collection
-	usersCollection := db.Database("SocialFlux").Collection("users")
+	// Assign the scheduledFor time if it's not NULL
+	if scheduledFor.Valid {
+		post.ScheduledFor = scheduledFor.Time
+	} else {
+		post.ScheduledFor = time.Time{}
+	}
+
+	// Handle the nullable coterie field
+	if coterie.Valid {
+		post.Coterie = coterie.String
+	} else {
+		post.Coterie = ""
+	}
+
+	// Handle the nullable image field (TEXT[])
+	if image != nil {
+		post.Image = image
+	} else {
+		post.Image = []string{}
+	}
+
+	// Handle the nullable hearts field (TEXT[])
+	if hearts != nil {
+		post.Hearts = hearts
+	} else {
+		post.Hearts = []string{}
+	}
+
+	// Handle the nullable comments field (JSONB)
+	if comments != nil {
+		var commentList []types.Comment
+		if err := json.Unmarshal(comments, &commentList); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
+			return
+		}
+		post.Comments = commentList
+	} else {
+		post.Comments = []types.Comment{}
+	}
+
+	// Handle the poll
+	if poll.Valid {
+		if err := json.Unmarshal([]byte(poll.String), &post.Poll); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else {
+		post.Poll = nil
+	}
+
+	// Fetch author details
 	var author types.Author
-	if err := usersCollection.FindOne(context.Background(), bson.M{"id": post.Author}).Decode(&author); err != nil {
+	query = `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isPartner, isOwner, isModerator, createdAt
+						FROM users WHERE id = $1`
+	err = db.QueryRow(query, post.Author).Scan(
+		&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
+		&author.IsDeveloper, &author.IsPartner, &author.IsOwner, &author.IsModerator, &author.CreatedAt)
+	if err != nil {
 		http.Error(w, fmt.Sprintf("Failed to fetch author details: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	// Fetch comments with limited author details
-	var comments []types.Comment
+	// Fetch comments with authors
+	var commentsWithAuthor []types.Comment
 	for _, comment := range post.Comments {
 		var commentAuthor types.Author
-		if err := usersCollection.FindOne(context.Background(), bson.M{"id": comment.Author}).Decode(&commentAuthor); err != nil {
+		query := `SELECT username, isVerified, isOrganisation, profilePicture, isOwner, isModerator, isDeveloper
+						FROM users WHERE id = $1`
+		err = db.QueryRow(query, comment.Author).Scan(
+			&commentAuthor.Username, &commentAuthor.IsVerified, &commentAuthor.IsOrganisation, &commentAuthor.ProfilePicture,
+			&commentAuthor.IsOwner, &commentAuthor.IsModerator, &commentAuthor.IsDeveloper)
+
+		// Handle if no rows were returned (author doesn't exist)
+		if err == sql.ErrNoRows {
+			commentAuthor.Username = "Unknown"
+			commentAuthor.IsVerified = false
+			commentAuthor.IsOrganisation = false
+			commentAuthor.ProfilePicture = ""
+			commentAuthor.IsOwner = false
+			commentAuthor.IsModerator = false
+			commentAuthor.IsDeveloper = false
+		} else if err != nil {
 			http.Error(w, fmt.Sprintf("Failed to fetch author details for comment: %v", err), http.StatusInternalServerError)
 			return
 		}
 
-		// Construct each comment with author's details
 		commentData := types.Comment{
 			ID:             comment.ID,
 			Content:        comment.Content,
 			IsVerified:     commentAuthor.IsVerified,
 			IsOrganisation: commentAuthor.IsOrganisation,
 			IsPartner:      commentAuthor.IsPartner,
-			TimeAgo:        TimeAgo(comment.CreatedAt),
+			TimeAgo:        calculateTimeAgo(comment.CreatedAt),
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsModerator:    commentAuthor.IsModerator,
@@ -89,24 +151,23 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 			Replies:        comment.Replies,
 			CreatedAt:      comment.CreatedAt,
 		}
-		comments = append(comments, commentData)
+		commentsWithAuthor = append(commentsWithAuthor, commentData)
 	}
 
 	// Sort comments by CreatedAt in descending order (most recent first)
-	sort.Slice(comments, func(i, j int) bool {
-		return comments[i].CreatedAt.After(comments[j].CreatedAt)
+	sort.Slice(commentsWithAuthor, func(i, j int) bool {
+		return commentsWithAuthor[i].CreatedAt.After(commentsWithAuthor[j].CreatedAt)
 	})
 
 	// Update hearts with author usernames
-	var hearts []string
+	var heartsWithUsernames []string
 	for _, heartID := range post.Hearts {
 		var heartAuthor types.Author
-		if err := usersCollection.FindOne(context.Background(), bson.M{"id": heartID}).Decode(&heartAuthor); err != nil {
-			hearts = append(hearts, "Unknown")
+		if err := db.QueryRow(`SELECT username FROM users WHERE id = $1`, heartID).Scan(&heartAuthor.Username); err != nil {
+			heartsWithUsernames = append(heartsWithUsernames, "Unknown")
 			continue
 		}
-
-		hearts = append(hearts, heartAuthor.Username)
+		heartsWithUsernames = append(heartsWithUsernames, heartAuthor.Username)
 	}
 
 	// Calculate total votes for polls if applicable
@@ -114,15 +175,15 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		totalVotes := 0
 		for i := range post.Poll {
 			for j := range post.Poll[i].Options {
+				// Calculate the vote count from the Votes field
 				optionVoteCount := len(post.Poll[i].Options[j].Votes)
 				totalVotes += optionVoteCount
 
-				// Clear votes from the response but set vote count
-				post.Poll[i].Options[j].Votes = nil
+				// Set the VoteCount for the option
 				post.Poll[i].Options[j].VoteCount = optionVoteCount
 			}
 		}
-		// Set total votes for the first poll in the list
+		// Set total votes for the poll
 		if len(post.Poll) > 0 {
 			post.Poll[0].TotalVotes = totalVotes
 		}
@@ -147,8 +208,8 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		},
 		"createdAt": post.CreatedAt,
 		"poll":      post.Poll,
-		"hearts":    hearts,
-		"comments":  comments,
+		"hearts":    heartsWithUsernames,
+		"comments":  commentsWithAuthor,
 	}
 
 	// Add image field if it is not empty
@@ -163,37 +224,4 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
-}
-
-// Function to calculate time ago
-func TimeAgo(createdAt time.Time) string {
-	now := time.Now().UTC()
-	diff := now.Sub(createdAt)
-
-	years := int(diff.Hours() / 24 / 365)
-	if years > 0 {
-		return fmt.Sprintf("%d years ago", years)
-	}
-
-	months := int(diff.Hours() / 24 / 30)
-	if months > 0 {
-		return fmt.Sprintf("%d months ago", months)
-	}
-
-	days := int(diff.Hours() / 24)
-	if days > 0 {
-		return fmt.Sprintf("%d days ago", days)
-	}
-
-	hours := int(diff.Hours())
-	if hours > 0 {
-		return fmt.Sprintf("%d hours ago", hours)
-	}
-
-	minutes := int(diff.Minutes())
-	if minutes > 0 {
-		return fmt.Sprintf("%d minutes ago", minutes)
-	}
-
-	return "Just now"
 }

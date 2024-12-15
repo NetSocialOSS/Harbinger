@@ -1,9 +1,8 @@
 package routes
 
 import (
-	"context"
+	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -13,44 +12,49 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
+	"github.com/lib/pq"
 )
 
 func GetPosts(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	blogCollection := db.Database("SocialFlux").Collection("blogposts")
-	userCollection := db.Database("SocialFlux").Collection("users")
-
-	var blogs []types.BlogPost
-	cursor, err := blogCollection.Find(context.Background(), bson.D{})
+	// Query to get all blog posts
+	rows, err := db.Query("SELECT id, slug, title, date, authorId, overview, content FROM blogpost")
 	if err != nil {
 		logAndReturnError(w, "Failed to fetch blog posts", err)
 		return
 	}
-	defer cursor.Close(context.Background())
-
-	if err := cursor.All(context.Background(), &blogs); err != nil {
-		logAndReturnError(w, "Failed to decode blog posts", err)
-		return
-	}
+	defer rows.Close()
 
 	var responsePosts []map[string]interface{}
 
-	for _, blog := range blogs {
-		var user types.User
-		err := userCollection.FindOne(context.Background(), bson.M{"id": blog.AuthorID}).Decode(&user)
-		if err == mongo.ErrNoDocuments {
-			log.Println("Warning: Author not found for blog post ID:", blog.ID)
-			continue
-		} else if err != nil {
-			logAndReturnError(w, "Failed to fetch author details", err)
+	for rows.Next() {
+		var blog types.BlogPost
+		var authorId string
+		var content []string
+		err := rows.Scan(&blog.ID, &blog.Slug, &blog.Title, &blog.Date, &authorId, &blog.Overview, pq.Array(&content))
+		if err != nil {
+			logAndReturnError(w, "Failed to decode blog post", err)
 			return
+		}
+
+		// Convert []string (content) to []PostEntry
+		var postEntries []types.PostEntry
+		for _, body := range content {
+			postEntries = append(postEntries, types.PostEntry{Body: body})
+		}
+		blog.Content = postEntries
+
+		// Fetch author details
+		var user types.User
+		err = db.QueryRow(`SELECT username, displayName, profilePicture FROM users WHERE id = $1`, authorId).Scan(&user.Username, &user.DisplayName, &user.ProfilePicture)
+
+		if err != nil {
+			continue
 		}
 
 		postMap := map[string]interface{}{
@@ -69,7 +73,6 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 
 	// Set the response header to application/json
 	w.Header().Set("Content-Type", "application/json")
-	// Encode responsePosts to JSON and write to the response
 	if err := json.NewEncoder(w).Encode(responsePosts); err != nil {
 		logAndReturnError(w, "Failed to encode blog posts", err)
 		return
@@ -78,12 +81,11 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 
 // logAndReturnError logs an error message and writes an error response
 func logAndReturnError(w http.ResponseWriter, msg string, err error) {
-	log.Println(msg+":", err)
 	http.Error(w, msg, http.StatusInternalServerError)
 }
 
 func AddBlogPost(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
@@ -106,50 +108,43 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Since UserID is now a UUID string, we don't need ObjectIDFromHex
 	_, err = uuid.Parse(UserID)
 	if err != nil {
 		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
 		return
 	}
 
-	userCollection := db.Database("SocialFlux").Collection("users")
+	// Query the users table to check authorization
 	var user types.User
-
-	// Query the users collection using UUID string
-	err = userCollection.FindOne(context.Background(), bson.M{"id": UserID}).Decode(&user)
-	if err == mongo.ErrNoDocuments || !(user.IsDeveloper || user.IsOwner) {
+	err = db.QueryRow("SELECT id, isDeveloper, isOwner FROM users WHERE id = $1", UserID).Scan(&user.ID, &user.IsDeveloper, &user.IsOwner)
+	if err != nil || !(user.IsDeveloper || user.IsOwner) {
 		http.Error(w, "User not authorized to add posts", http.StatusForbidden)
 		return
-	} else if err != nil {
-		logAndReturnError(w, "Failed to fetch user data", err)
-		return
 	}
 
-	blogCollection := db.Database("SocialFlux").Collection("blogposts")
-	newPost := types.BlogPost{
-		ID:       uuid.New().String(),
-		Slug:     generateSlug(Title),
-		Title:    Title,
-		Date:     time.Now().Format("January 02, 2006"),
-		AuthorID: UserID,
-		Overview: Overview,
-		Content:  Content,
+	// Transform Content into a slice of strings
+	var contentBodies []string
+	for _, entry := range Content {
+		contentBodies = append(contentBodies, entry.Body)
 	}
 
-	_, err = blogCollection.InsertOne(context.Background(), newPost)
+	// Insert new blog post
+	blogID := uuid.New().String()
+	blogSlug := generateSlug(Title)
+	_, err = db.Exec(`
+		INSERT INTO blogpost (id, slug, title, date, authorId, overview, content) 
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		blogID, blogSlug, Title, time.Now(), UserID, Overview, pq.Array(contentBodies),
+	)
 	if err != nil {
-		logAndReturnError(w, "Failed to insert blog post", err)
+		http.Error(w, "Failed to insert blog post", http.StatusInternalServerError)
 		return
 	}
 
 	// Respond with success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(newPost); err != nil {
-		logAndReturnError(w, "Failed to encode response", err)
-		return
-	}
+	json.NewEncoder(w).Encode(map[string]string{"message": "New blog post added successfully", "id": blogID})
 }
 
 // Helper function to generate a slug from the title

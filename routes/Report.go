@@ -2,45 +2,30 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log"
 	"net/http"
 	"netsocial/middlewares"
-	"netsocial/types"
 	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid" // Import the uuid package
 	"github.com/gtuk/discordwebhook"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
 )
 
 // getReporterUsername fetches the reporter's username from the database
-func getReporterUsername(ctx context.Context, db *mongo.Client, reporterID string) (string, error) {
-	userCollection := db.Database("SocialFlux").Collection("users")
-
-	// Convert reporterID string to UUID
-	parsedID, err := uuid.Parse(reporterID)
+func getReporterUsername(ctx context.Context, db *sql.DB, reporterID string) (string, error) {
+	query := "SELECT username FROM users WHERE id = $1"
+	var username string
+	err := db.QueryRowContext(ctx, query, reporterID).Scan(&username)
 	if err != nil {
-		return "", fmt.Errorf("invalid reporter ID format: %v", err)
-	}
-
-	filter := bson.M{"id": parsedID.String()}
-
-	var result struct {
-		Username string `bson:"username"`
-	}
-	err = userCollection.FindOne(ctx, filter).Decode(&result)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == sql.ErrNoRows {
 			return "", nil
 		}
-		return "", err
+		return "", fmt.Errorf("error fetching reporter username: %v", err)
 	}
-
-	return result.Username, nil
+	return username, nil
 }
 
 // ReportUser handles reporting a user
@@ -55,7 +40,7 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
@@ -70,12 +55,10 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 
 	webhookURL := os.Getenv("Report_URL")
 
-	title := "🚨 User Report 🚨"
+	title := "User Report"
 	description := fmt.Sprintf("[Reported User: %s](https://netsocial.app/user/%s)", reportedUsername, reportedUsername)
 	reporterUsernameField := "Reporter"
-	reporterUsernameValue := reporterUsername
 	reasonField := "Reason"
-	reasonValue := reason
 
 	embed := discordwebhook.Embed{
 		Title:       &title,
@@ -83,11 +66,11 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 		Fields: &[]discordwebhook.Field{
 			{
 				Name:  &reporterUsernameField,
-				Value: &reporterUsernameValue,
+				Value: &reporterUsername,
 			},
 			{
 				Name:  &reasonField,
-				Value: &reasonValue,
+				Value: &reason,
 			},
 		},
 	}
@@ -112,7 +95,6 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 func ReportPost(w http.ResponseWriter, r *http.Request) {
 	reportedPostID := r.URL.Query().Get("reportedPostID")
 	reason := r.URL.Query().Get("reason")
-
 	encryptedreporterID := r.Header.Get("X-userID")
 
 	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
@@ -121,7 +103,7 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
@@ -134,16 +116,11 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postCollection := db.Database("SocialFlux").Collection("posts")
-
-	filter := bson.M{"_id": reportedPostID}
-	var existingPost struct {
-		ID string `bson:"_id,omitempty"`
-	}
-
-	err = postCollection.FindOne(r.Context(), filter).Decode(&existingPost)
+	query := "SELECT id FROM Post WHERE id = $1"
+	var postID string
+	err = db.QueryRowContext(r.Context(), query, reportedPostID).Scan(&postID)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == sql.ErrNoRows {
 			http.Error(w, `{"error": "Invalid reported post ID"}`, http.StatusBadRequest)
 			return
 		}
@@ -152,15 +129,12 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send report to Discord webhook
 	webhookURL := os.Getenv("Report_URL")
 
-	title := "🚨 Post Report 🚨"
+	title := "Post Report"
 	description := fmt.Sprintf("[Reported Post](https://netsocial.app/post/%s)", reportedPostID)
 	reporterUsernameField := "Reporter"
-	reporterUsernameValue := reporterUsername
 	reasonField := "Reason"
-	reasonValue := reason
 
 	embed := discordwebhook.Embed{
 		Title:       &title,
@@ -168,11 +142,11 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		Fields: &[]discordwebhook.Field{
 			{
 				Name:  &reporterUsernameField,
-				Value: &reporterUsernameValue,
+				Value: &reporterUsername,
 			},
 			{
 				Name:  &reasonField,
-				Value: &reasonValue,
+				Value: &reason,
 			},
 		},
 	}
@@ -195,9 +169,8 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 
 // ReportCoterie handles reporting a coterie
 func ReportCoterie(w http.ResponseWriter, r *http.Request) {
-	CoterieName := r.URL.Query().Get("Coterie")
+	coterieName := r.URL.Query().Get("Coterie")
 	reason := r.URL.Query().Get("reason")
-
 	encryptedreporterID := r.Header.Get("X-userID")
 
 	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
@@ -206,7 +179,7 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		log.Println("Error fetching reporter username:", err)
@@ -219,15 +192,11 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	coterieCollection := db.Database("SocialFlux").Collection("coterie")
-
-	// Check if the Coterie exists in the collection
-	filter := bson.M{"name": CoterieName}
-	var Coterie types.Coterie
-
-	err = coterieCollection.FindOne(r.Context(), filter).Decode(&Coterie)
+	query := "SELECT name FROM coterie WHERE name = $1"
+	var name string
+	err = db.QueryRowContext(r.Context(), query, coterieName).Scan(&name)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == sql.ErrNoRows {
 			http.Error(w, `{"error": "Invalid reported coterie name"}`, http.StatusBadRequest)
 			return
 		}
@@ -239,11 +208,9 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 	webhookURL := os.Getenv("Report_URL")
 
 	title := "🚨 Coterie Report 🚨"
-	description := fmt.Sprintf("[Reported Coterie](https://netsocial.app/coterie/%s)", Coterie.Name)
+	description := fmt.Sprintf("[Reported Coterie](https://netsocial.app/coterie/%s)", coterieName)
 	reporterUsernameField := "Reporter"
-	reporterUsernameValue := reporterUsername
 	reasonField := "Reason"
-	reasonValue := reason
 
 	embed := discordwebhook.Embed{
 		Title:       &title,
@@ -251,16 +218,16 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 		Fields: &[]discordwebhook.Field{
 			{
 				Name:  &reporterUsernameField,
-				Value: &reporterUsernameValue,
+				Value: &reporterUsername,
 			},
 			{
 				Name:  &reasonField,
-				Value: &reasonValue,
+				Value: &reason,
 			},
 		},
 	}
 
-	content := fmt.Sprintf("Coterie %s has been reported by %s for reason: %s", CoterieName, reporterUsername, reason)
+	content := fmt.Sprintf("Coterie %s has been reported by %s for reason: %s", coterieName, reporterUsername, reason)
 	message := discordwebhook.Message{
 		Content: &content,
 		Embeds:  &[]discordwebhook.Embed{embed},

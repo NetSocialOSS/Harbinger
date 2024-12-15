@@ -3,27 +3,23 @@ package routes
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"math/rand"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
-	"github.com/gtuk/discordwebhook"
+	"github.com/lib/pq"
 	"github.com/resend/resend-go/v2"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -42,23 +38,23 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenCookie, err := r.Cookie("token")
 		if err != nil || tokenCookie == nil {
-			http.Error(w, "Hey! You need to provide your token in the authorization header. This endpoint is for authenticated users only!", http.StatusUnauthorized)
+			http.Error(w, "Token missing", http.StatusUnauthorized)
 			return
 		}
 
 		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, errors.New("invalid token signing method")
+				return nil, errors.New("invalid signing method")
 			}
 			return []byte(jwtSecret), nil
 		})
-		if err != nil || !token.Valid {
+		if err != nil {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
+		if !ok || !token.Valid {
 			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
 			return
 		}
@@ -69,13 +65,16 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		sessionCollection := r.Context().Value("db").(*mongo.Client).Database("SocialFlux").Collection("sessions")
-		var session types.Session
-		err = sessionCollection.FindOne(context.TODO(), bson.M{
-			"user_id": userID.String(),
-			"token":   tokenCookie.Value,
-		}).Decode(&session)
+		db := r.Context().Value("db").(*sql.DB)
+		var exists bool
+		query := "SELECT EXISTS(SELECT 1 FROM sessions WHERE userid = $1 AND token = $2)"
+		err = db.QueryRow(query, userID.String(), tokenCookie.Value).Scan(&exists)
 		if err != nil {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+			return
+		}
+
+		if !exists {
 			http.Error(w, "Session expired", http.StatusUnauthorized)
 			return
 		}
@@ -120,8 +119,7 @@ func sendWelcomeEmail(email string) error {
 }
 
 func UserSignup(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-	userCollection := db.Database("SocialFlux").Collection("users")
+	db := r.Context().Value("db").(*sql.DB)
 
 	var signupData struct {
 		Username          string `json:"username"`
@@ -156,90 +154,61 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	disposableDomains, err := FetchDisposableDomains()
-	if err != nil {
-		http.Error(w, "Failed to fetch disposable email domains", http.StatusInternalServerError)
-		return
-	}
-
-	emailParts := strings.Split(email, "@")
-	if len(emailParts) != 2 {
-		http.Error(w, "Invalid email format", http.StatusBadRequest)
-		return
-	}
-
-	emailDomain := emailParts[1]
-	if _, exists := disposableDomains[emailDomain]; exists {
-		err = sendDiscordWebhookFailure(signupData.Username, email)
-		if err != nil {
-			http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
-			return
-		}
-		http.Error(w, "Disposable email domains are not allowed", http.StatusBadRequest)
-		return
-	}
-
-	count, err := userCollection.CountDocuments(context.TODO(), bson.M{
-		"$or": []bson.M{
-			{"username": signupData.Username},
-			{"email": email},
-		},
-	})
+	// Check for existing user
+	var exists bool
+	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)",
+		signupData.Username, email).Scan(&exists)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
-	if count > 0 {
+	if exists {
 		http.Error(w, "Username or email already exists", http.StatusBadRequest)
 		return
 	}
 
-	var lastUser types.User
-	err = userCollection.FindOne(context.TODO(), bson.M{}, options.FindOne().SetSort(bson.D{{Key: "userid", Value: -1}})).Decode(&lastUser)
-	if err != nil && err != mongo.ErrNoDocuments {
-		http.Error(w, "Failed to retrieve last user", http.StatusInternalServerError)
+	// Get the last user ID
+	var lastUserID int
+	err = db.QueryRow("SELECT COALESCE(MAX(userid), 0) FROM users").Scan(&lastUserID)
+	if err != nil {
+		http.Error(w, "Failed to get last user ID", http.StatusInternalServerError)
 		return
 	}
 
-	newUserID := lastUser.UserID + 1
-
-	user := types.User{
-		ID:             uuid.New().String(),
-		UserID:         newUserID,
-		Username:       signupData.Username,
-		DisplayName:    signupData.Username,
-		IsVerified:     false,
-		IsOrganisation: false,
-		ProfilePicture: "https://cdn.netsocial.app/logos/netsocial.png",
-		IsDeveloper:    false,
-		IsOwner:        false,
-		IsPartner:      false,
-		Email:          email,
-		Links:          []string{},
-		Password:       string(hashedPassword),
-		CreatedAt:      time.Now(),
+	// Begin transaction
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
+		return
 	}
+	defer tx.Rollback()
 
-	result, err := userCollection.InsertOne(context.TODO(), user)
+	// Insert new user
+	userID := uuid.New().String()
+	_, err = tx.Exec(`
+		INSERT INTO users (
+			id, userid, username, displayname, email, password, 
+			profilepicture, createdat, links, isbanned
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		userID, lastUserID+1, signupData.Username, signupData.Username, email,
+		hashedPassword, "https://cdn.netsocial.app/logos/netsocial.png",
+		time.Now(), pq.Array([]string{}), false,
+	)
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
 		return
 	}
 
+	// Send welcome email
 	err = sendWelcomeEmail(email)
 	if err != nil {
-		_, deleteErr := userCollection.DeleteOne(context.TODO(), bson.M{"_id": result.InsertedID})
-		if deleteErr != nil {
-			http.Error(w, "Failed to send email and rollback user creation", http.StatusInternalServerError)
-			return
-		}
-		http.Error(w, "Failed to send welcome email. Account creation not allowed", http.StatusBadRequest)
+		http.Error(w, "Failed to send welcome email", http.StatusInternalServerError)
 		return
 	}
 
-	err = sendDiscordWebhook(signupData.Username)
-	if err != nil {
-		http.Error(w, "Failed to send Discord webhook", http.StatusInternalServerError)
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
 
@@ -247,50 +216,8 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"message": "User created successfully"})
 }
 
-func sendDiscordWebhook(username string) error {
-	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
-	if webhookURL == "" {
-		return errors.New("Discord webhook URL not set in environment variables")
-	}
-
-	content := "A new user has registered by the name: " + username
-	message := discordwebhook.Message{
-		Content: &content,
-	}
-
-	err := discordwebhook.SendMessage(webhookURL, message)
-	if err != nil {
-		log.Printf("Error sending Discord webhook: %v", err)
-		return err
-	}
-
-	return nil
-}
-
-func sendDiscordWebhookFailure(username, email string) error {
-	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
-	if webhookURL == "" {
-		return errors.New("Discord webhook URL not set in environment variables")
-	}
-
-	content := fmt.Sprintf("User registration failed for username: %s with email: %s (Disposable email domain)", username, email)
-	message := discordwebhook.Message{
-		Content: &content,
-	}
-
-	err := discordwebhook.SendMessage(webhookURL, message)
-	if err != nil {
-		log.Printf("Error sending Discord webhook: %v", err)
-		return err
-	}
-
-	return nil
-}
-
 func UserLogin(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-	userCollection := db.Database("SocialFlux").Collection("users")
-	sessionCollection := db.Database("SocialFlux").Collection("sessions")
+	db := r.Context().Value("db").(*sql.DB)
 
 	var loginData struct {
 		Identifier string `json:"identifier"`
@@ -314,14 +241,14 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err = userCollection.FindOne(context.TODO(), bson.M{
-		"$or": []bson.M{
-			{"username": decryptedIdentifier},
-			{"email": decryptedIdentifier},
-		},
-	}).Decode(&user)
-	if err != nil {
+
+	query := `SELECT id, username, email, password FROM users WHERE username = $1 OR email = $1`
+	err = db.QueryRow(query, decryptedIdentifier).Scan(&user.ID, &user.Username, &user.Email, &user.Password)
+	if err == sql.ErrNoRows {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	} else if err != nil {
+		http.Error(w, fmt.Sprintf("Database query error: %v", err), http.StatusInternalServerError)
 		return
 	}
 
@@ -367,60 +294,27 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	expirationTime := time.Unix(int64(claims.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
 
-	session := types.Session{
-		UserID:    userUUID.String(),
-		SessionID: sessionID,
-		Device:    device,
-		StartedAt: time.Now(),
-		ExpiresAt: expirationTime,
-		Token:     token,
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    session.SessionID,
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteNoneMode,
-	})
-
-	_, err = sessionCollection.InsertOne(context.TODO(), session)
+	insertSessionQuery := `INSERT INTO sessions (sessionid, userid, device, startedat, expiresat, token) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err = db.Exec(insertSessionQuery, sessionID, user.ID, device, time.Now(), expirationTime, token)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
 
-	err = sendDiscordWebhookLogin(user.Username)
-	if err != nil {
-		log.Printf("Error sending Discord webhook: %v", err)
-	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    sessionID,
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteNoneMode,
+	})
 
 	json.NewEncoder(w).Encode(map[string]string{"message": "Logged in successfully"})
 }
 
-func sendDiscordWebhookLogin(username string) error {
-	webhookURL := os.Getenv("DISCORD_WEBHOOK_URL")
-	if webhookURL == "" {
-		return errors.New("Discord webhook URL not set in environment variables")
-	}
-
-	// Construct the message content with username, host, and IP address
-	content := fmt.Sprintf("User logged in: %s", username)
-
-	message := discordwebhook.Message{
-		Content: &content,
-	}
-
-	// Send the message to the Discord webhook
-	err := discordwebhook.SendMessage(webhookURL, message)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func UserLogout(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*sql.DB)
+
 	var logoutData struct {
 		SessionID string `json:"sessionId"`
 		UserID    string `json:"userId"`
@@ -436,19 +330,20 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := r.Context().Value("db").(*mongo.Client)
-	sessionCollection := db.Database("SocialFlux").Collection("sessions")
-
-	result, err := sessionCollection.DeleteOne(context.TODO(), bson.M{
-		"session_id": logoutData.SessionID,
-		"user_id":    userID,
-	})
+	result, err := db.Exec("DELETE FROM sessions WHERE sessionid = $1 AND userid = $2",
+		logoutData.SessionID, userID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	if result.DeletedCount == 0 {
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, "Failed to get rows affected", http.StatusInternalServerError)
+		return
+	}
+
+	if rowsAffected == 0 {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
@@ -475,8 +370,7 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func ChangePassword(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-	userCollection := db.Database("SocialFlux").Collection("users")
+	db := r.Context().Value("db").(*sql.DB)
 
 	var passwordData struct {
 		UserID      string `json:"userId"`
@@ -496,9 +390,13 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err = userCollection.FindOne(context.TODO(), bson.M{"id": userId}).Decode(&user)
-	if err != nil {
+	err = db.QueryRow("SELECT id, password FROM users WHERE id = $1", userId).Scan(&user.ID, &user.Password)
+	if err == sql.ErrNoRows {
 		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -531,7 +429,7 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = userCollection.UpdateOne(context.TODO(), bson.M{"_id": passwordData.UserID}, bson.M{"$set": bson.M{"password": string(hashedNewPassword)}})
+	_, err = db.Exec("UPDATE users SET password = $1 WHERE id = $2", string(hashedNewPassword), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
@@ -541,60 +439,80 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func CurrentUser(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
+	// Retrieve the database connection from the request context
+	db, ok := r.Context().Value("db").(*sql.DB)
+	if !ok || db == nil {
+		http.Error(w, "Database connection not found", http.StatusInternalServerError)
+		return
+	}
+
+	// Retrieve the user ID from the request context
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
-		http.Error(w, "Invalid user ID", http.StatusInternalServerError)
+		http.Error(w, "Invalid or missing user ID", http.StatusInternalServerError)
 		return
 	}
 
-	userCollection := db.Database("SocialFlux").Collection("users")
-	sessionCollection := db.Database("SocialFlux").Collection("sessions")
-
+	// Query user information
 	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{"id": userID.String()}).Decode(&user)
+	err := db.QueryRow(`
+		SELECT id, username, displayname, bio, profilepicture, isorganisation,
+		       "isPrivateHearts", "isPrivate", links
+		FROM users WHERE id = $1
+	`, userID.String()).Scan(
+		&user.ID, &user.Username, &user.DisplayName, &user.Bio,
+		&user.ProfilePicture, &user.IsOrganisation,
+		&user.IsPrivateHearts, &user.IsPrivate, pq.Array(&user.Links),
+	)
 	if err != nil {
-		http.Error(w, "Failed to find user", http.StatusInternalServerError)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "User not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 		return
 	}
 
-	var sessions []map[string]interface{}
-	cursor, err := sessionCollection.Find(context.TODO(), bson.M{"user_id": userID.String()})
+	// Query user sessions
+	rows, err := db.Query(`
+		SELECT sessionid, device, startedat, expiresat
+		FROM sessions WHERE userid = $1
+	`, userID.String())
 	if err != nil {
-		http.Error(w, "Failed to retrieve sessions", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve user sessions", http.StatusInternalServerError)
 		return
 	}
-	defer cursor.Close(context.TODO())
+	defer rows.Close()
 
-	currentSessionCookie, err := r.Cookie("session_id")
-	var currentSessionID string
-	if err == nil {
+	// Get the current session ID from the session cookie (if present)
+	currentSessionID := ""
+	if currentSessionCookie, err := r.Cookie("session_id"); err == nil {
 		currentSessionID = currentSessionCookie.Value
 	}
 
-	for cursor.Next(context.TODO()) {
+	// Process session rows
+	var sessions []map[string]interface{}
+	for rows.Next() {
 		var session types.Session
-		if err := cursor.Decode(&session); err != nil {
-			http.Error(w, "Failed to decode session", http.StatusInternalServerError)
+		if err := rows.Scan(&session.SessionID, &session.Device, &session.StartedAt, &session.ExpiresAt); err != nil {
+			http.Error(w, "Failed to parse session data", http.StatusInternalServerError)
 			return
 		}
-
-		currentSession := session.SessionID == currentSessionID
 
 		sessions = append(sessions, map[string]interface{}{
 			"session_id": session.SessionID,
 			"device":     session.Device,
 			"started_at": session.StartedAt,
 			"expires_at": session.ExpiresAt,
-			"current":    currentSession,
+			"current":    session.SessionID == currentSessionID,
 		})
 	}
-
-	if err := cursor.Err(); err != nil {
-		http.Error(w, "Cursor error", http.StatusInternalServerError)
+	if err = rows.Err(); err != nil {
+		http.Error(w, "Error iterating session rows", http.StatusInternalServerError)
 		return
 	}
 
+	// Prepare the response
 	response := map[string]interface{}{
 		"_id":             user.ID,
 		"username":        user.Username,
@@ -608,48 +526,77 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 		"sessions":        sessions,
 	}
 
-	json.NewEncoder(w).Encode(response)
+	// Encode and write the JSON response
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
+	// Define the structure to parse incoming JSON
 	var logoutData struct {
 		SessionID string `json:"sessionId"`
 		UserID    string `json:"userId"`
 	}
+
+	// Decode the request body
 	if err := json.NewDecoder(r.Body).Decode(&logoutData); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID, err := uuid.Parse(logoutData.UserID)
+	// Parse UserID
+	decrypteduserID, err := middlewares.DecryptAES(logoutData.UserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := uuid.Parse(decrypteduserID)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
+	// Parse SessionID
 	sessionID, err := uuid.Parse(logoutData.SessionID)
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
 
-	db := r.Context().Value("db").(*mongo.Client)
-	sessionCollection := db.Database("SocialFlux").Collection("sessions")
+	// Retrieve database connection from context
+	db, ok := r.Context().Value("db").(*sql.DB)
+	if !ok {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
-	result, err := sessionCollection.DeleteOne(context.TODO(), bson.M{
-		"session_id": sessionID.String(),
-		"user_id":    userID.String(),
-	})
+	// Execute the query to delete the session
+	result, err := db.Exec(`
+		DELETE FROM sessions 
+		WHERE sessionid = $1 AND userid = $2
+	`, sessionID.String(), userID.String())
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	if result.DeletedCount == 0 {
+	// Check the number of affected rows
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		http.Error(w, "Failed to get rows affected", http.StatusInternalServerError)
+		return
+	}
+
+	// Handle case where session was not found
+	if rowsAffected == 0 {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
+	// Clear the token cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
@@ -659,7 +606,12 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 
-	json.NewEncoder(w).Encode(map[string]string{"message": "Session revoked and user logged out successfully"})
+	// Send success response
+	response := map[string]string{"message": "Session revoked and user logged out successfully"}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func generateTemporaryPassword() (string, error) {
@@ -672,8 +624,7 @@ func generateTemporaryPassword() (string, error) {
 }
 
 func ResetPassword(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-	userCollection := db.Database("SocialFlux").Collection("users")
+	db := r.Context().Value("db").(*sql.DB)
 
 	var resetData struct {
 		Identifier string `json:"identifier"`
@@ -685,15 +636,16 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err := userCollection.FindOne(context.TODO(), bson.M{
-		"$or": []bson.M{
-			{"username": resetData.Identifier},
-			{"email": resetData.Identifier},
-		},
-	}).Decode(&user)
-
-	if err != nil {
+	err := db.QueryRow(`
+		SELECT id, email FROM users 
+		WHERE username = $1 OR email = $1
+	`, resetData.Identifier).Scan(&user.ID, &user.Email)
+	if err == sql.ErrNoRows {
 		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
@@ -712,14 +664,11 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update the user's password in the database
-	_, err = userCollection.UpdateOne(
-		context.TODO(),
-		bson.M{"id": user.ID},
-		bson.M{"$set": bson.M{
-			"password":          string(hashedPassword),
-			"password_reset_at": time.Now(),
-		}},
-	)
+	_, err = db.Exec(`
+		UPDATE users 
+		SET password = $1, password_reset_at = $2 
+		WHERE id = $3
+	`, string(hashedPassword), time.Now(), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
@@ -750,11 +699,6 @@ func sendPasswordResetEmail(email, tempPassword string) error {
 	// Send the email using the Resend service
 	_, err := client.Emails.Send(params)
 	return err
-}
-
-func jsonResponse(message string) string {
-	response, _ := json.Marshal(map[string]string{"error": message})
-	return string(response)
 }
 
 func Auth(router chi.Router) {

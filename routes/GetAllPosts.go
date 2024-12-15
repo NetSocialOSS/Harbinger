@@ -2,8 +2,10 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -11,14 +13,22 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/karlseguin/ccache/v2"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/lib/pq"
 )
 
 var (
 	userCache = ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100))
 	postCache = ccache.New(ccache.Configure().MaxSize(1000).ItemsToPrune(100))
+
+	// HTTP client with connection pooling
+	httpClient = &http.Client{
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     30 * time.Second,
+		},
+		Timeout: 10 * time.Second,
+	}
 )
 
 func init() {
@@ -37,14 +47,11 @@ func purgeCachePeriodically() {
 }
 
 func GetAllPosts(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*mongo.Client)
+	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
-
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-	usersCollection := db.Database("SocialFlux").Collection("users")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -52,108 +59,130 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	// Check if posts are already cached
 	cachedPosts := postCache.Get("all_posts")
 	if cachedPosts != nil {
-		// Return cached posts if they exist
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cachedPosts.Value())
 		return
 	}
 
-	// Sort posts by CreatedAt in descending order
-	findOptions := options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}})
-	cursor, err := postsCollection.Find(ctx, bson.M{}, findOptions)
+	query := `SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, "isIndexed"
+			FROM post
+			WHERE "isIndexed" = true
+			ORDER BY createdat DESC`
+
+	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
 	var posts []types.Post
-	if err := cursor.All(ctx, &posts); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	for rows.Next() {
+		var post types.Post
+		var commentsJSON []byte
+		var pollJSON json.RawMessage
+		var scheduledFor sql.NullTime
+
+		err := rows.Scan(
+			&post.ID, &post.Title, &post.Content, &post.Author, &post.Coterie, &scheduledFor,
+			pq.Array(&post.Image), &pollJSON, &post.CreatedAt, pq.Array(&post.Hearts),
+			&commentsJSON, &post.Indexing,
+		)
+		if err != nil {
+			log.Printf("Error scanning row: %v", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		if scheduledFor.Valid {
+			post.ScheduledFor = scheduledFor.Time
+		} else {
+			post.ScheduledFor = time.Time{}
+		}
+
+		if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
+			log.Printf("Error unmarshalling comments JSON: %v", err)
+			post.Comments = nil
+		}
+		if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
+			log.Printf("Error unmarshalling poll JSON: %v", err)
+			post.Poll = nil
+		}
+
+		posts = append(posts, post)
 	}
 
-	var visiblePosts []map[string]interface{} // A slice to store formatted posts
-	now := time.Now()                         // Current time for comparison
-	for i, post := range posts {
-		// Skip the post if indexing is false (for coterie only posts)
+	var visiblePosts []map[string]interface{}
+	now := time.Now()
+	for _, post := range posts {
 		if !post.Indexing {
 			continue
 		}
 
 		var author types.Author
-		// Check if the author is cached
 		cachedAuthor := userCache.Get(post.Author)
 		if cachedAuthor != nil {
 			author = cachedAuthor.Value().(types.Author)
 		} else {
-			// Query the usersCollection to check if the author exists
-			err := usersCollection.FindOne(ctx, bson.M{"id": post.Author}).Decode(&author)
+			authorQuery := `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner
+				FROM users WHERE id = $1`
+			err := db.QueryRowContext(ctx, authorQuery, post.Author).Scan(
+				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
+				&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
+			)
 			if err != nil {
-				// Handle error (author not found)
-				posts[i].Author = uuid.UUID{}.String() // or set to default if necessary
+				log.Printf("Error fetching author data for user %s", err)
 				continue
 			}
-			// Cache the author with a 3-minute expiration
 			userCache.Set(post.Author, author, time.Minute*3)
 		}
 
-		// Check if the author's account is private
 		if author.IsPrivate {
-			continue // Skip this post if the author's account is private
+			continue
 		}
 
-		if post.Poll != nil { // Check if the post has polls
+		if post.Poll != nil {
 			totalVotes := 0
 			for _, poll := range post.Poll {
 				for j := range poll.Options {
-					optionVoteCount := len(poll.Options[j].Votes)
-					totalVotes += optionVoteCount
-
-					poll.Options[j].Votes = nil // Clear votes for the response
-					poll.Options[j].VoteCount = optionVoteCount
+					totalVotes += len(poll.Options[j].Votes)
+					poll.Options[j].VoteCount = len(poll.Options[j].Votes)
+					poll.Options[j].Votes = nil
 				}
 			}
-			// Set total votes for the last poll or aggregate if needed
 			if len(post.Poll) > 0 {
 				post.Poll[0].TotalVotes = totalVotes
 			}
 		}
 
-		// Check the scheduled time
-		if !post.ScheduledFor.IsZero() {
-			if post.ScheduledFor.After(now) {
-				// Post is scheduled for the future, skip it
-				continue
-			}
-			// If the scheduledFor is today or in the past, we continue to process the post
+		if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
+			continue
 		}
 
-		// Prepare hearts details
 		var heartsDetails []string
 		for _, heart := range post.Hearts {
 			userID, err := uuid.Parse(heart)
 			if err != nil {
-				heartsDetails = append(heartsDetails, "Unknown")
+				log.Printf("Error parsing heart UUID %s: %v", heart, err)
 				continue
 			}
 
-			// Check if the username is already cached
 			cachedHeartAuthor := userCache.Get(userID.String())
 			if cachedHeartAuthor == nil {
 				var heartAuthor types.Author
-				err := usersCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&heartAuthor)
+				err := db.QueryRowContext(ctx, `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner FROM users WHERE id = $1`, userID.String()).Scan(
+					&heartAuthor.Username, &heartAuthor.IsVerified, &heartAuthor.IsOrganisation, &heartAuthor.ProfileBanner, &heartAuthor.ProfilePicture,
+					&heartAuthor.IsDeveloper, &heartAuthor.IsOwner, &heartAuthor.IsModerator, &heartAuthor.IsPartner,
+				)
 				if err != nil {
-					heartsDetails = append(heartsDetails, "Unknown")
+					log.Printf("Error fetching heart author data for user %s", err)
 					continue
 				}
 				heartsDetails = append(heartsDetails, heartAuthor.Username)
-				// Cache the entire author struct with a 3-minute expiration
 				userCache.Set(userID.String(), heartAuthor, time.Minute*3)
 			} else {
-				// Assert the cached value to the correct type (Author)
-				author := cachedHeartAuthor.Value().(types.Author)
-				heartsDetails = append(heartsDetails, author.Username)
+				cachedAuthor := cachedHeartAuthor.Value().(types.Author)
+				heartsDetails = append(heartsDetails, cachedAuthor.Username)
 			}
 		}
 
@@ -182,14 +211,11 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			postResponse["scheduledFor"] = post.ScheduledFor
 		}
 
-		// Add the formatted post to the visible posts slice
 		visiblePosts = append(visiblePosts, postResponse)
 	}
 
-	// Cache the result of the posts for future requests with a 3-minute expiration
 	postCache.Set("all_posts", visiblePosts, time.Minute*3)
 
-	// Return only visible posts (posts from non-private accounts)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(visiblePosts)
 }

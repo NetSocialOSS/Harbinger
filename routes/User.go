@@ -2,52 +2,44 @@ package routes
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"netsocial/middlewares"
 	"netsocial/types"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/resend/resend-go/v2"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 func deleteAccount(w http.ResponseWriter, r *http.Request) {
-	// Get the MongoDB client from the request context
-	db := r.Context().Value("db").(*mongo.Client)
+	var requestPayload struct {
+		UserId string `json:"userId"`
+	}
 
-	// Get the users, posts, and coteries collections
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	postsCollection := db.Database("SocialFlux").Collection("posts")
-	coteriesCollection := db.Database("SocialFlux").Collection("coteries")
-
-	// Retrieve the userId from query parameters
-	encrypteduserId := r.Header.Get("X-userID")
-	if encrypteduserId == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+	if err := json.NewDecoder(r.Body).Decode(&requestPayload); err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
-	userId, err := middlewares.DecryptAES(encrypteduserId)
+
+	userId, err := middlewares.DecryptAES(requestPayload.UserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
 		return
 	}
 
-	// Set up a context with a timeout to avoid long-running operations
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
+	db := r.Context().Value("db").(*sql.DB)
 
-	// Retrieve user details to send the goodbye email
 	var user types.User
-	err = usersCollection.FindOne(ctx, bson.M{"id": userId}).Decode(&user)
+	err = db.QueryRowContext(r.Context(), `SELECT id, email FROM users WHERE id = $1`, userId).Scan(&user.ID, &user.Email)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
 		return
@@ -60,39 +52,27 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the user exists in the users collection
-	count, err := usersCollection.CountDocuments(ctx, bson.M{"id": userId})
-	if err != nil {
-		http.Error(w, "Failed to check if user exists", http.StatusInternalServerError)
-		return
-	}
-	if count == 0 {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
-
-	// Delete the user from the users collection
-	_, err = usersCollection.DeleteOne(ctx, bson.M{"id": userId})
+	// Delete user from users
+	_, err = db.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
 	// Delete all posts authored by the user
-	_, err = postsCollection.DeleteMany(ctx, bson.M{"author": userId})
+	_, err = db.ExecContext(r.Context(), `DELETE FROM post WHERE author = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete posts", http.StatusInternalServerError)
 		return
 	}
 
 	// Delete all coteries owned by the user
-	_, err = coteriesCollection.DeleteMany(ctx, bson.M{"owner": userId})
+	_, err = db.ExecContext(r.Context(), `DELETE FROM coterie WHERE owner = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete coteries", http.StatusInternalServerError)
 		return
 	}
 
-	// Respond with a success message
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "User, their posts, and coteries deleted successfully"})
 }
@@ -112,8 +92,7 @@ func sendGoodbyeEmail(email string) error {
 }
 
 func GetUserByName(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
-
+	db := r.Context().Value("db").(*sql.DB)
 	username := chi.URLParam(r, "username")
 	if username == "" {
 		http.Error(w, "Name parameter is required", http.StatusBadRequest)
@@ -123,24 +102,52 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 	action := r.URL.Query().Get("action")
 
 	var user types.User
-	userCollection := db.Database("SocialFlux").Collection("users")
-	result := userCollection.FindOne(r.Context(), bson.M{"username": username})
-	if result.Err() != nil {
-		if result.Err() == mongo.ErrNoDocuments {
+
+	err := db.QueryRowContext(r.Context(), `
+    SELECT id, username, displayName, bio, isVerified, isOrganisation, isDeveloper, isOwner, isBanned, isPartner, isModerator, profilePicture, profileBanner, followers, following, createdAt, links, "isPrivate", "isPrivateHearts"
+    FROM "users"
+    WHERE username = $1`, username).Scan(
+		&user.ID, &user.Username, &user.DisplayName, &user.Bio, &user.IsVerified, &user.IsOrganisation,
+		&user.IsDeveloper, &user.IsOwner, &user.IsBanned, &user.IsPartner, &user.IsModerator, &user.ProfilePicture, &user.ProfileBanner,
+		pq.Array(&user.Followers), pq.Array(&user.Following), &user.CreatedAt, pq.Array(&user.Links),
+		&user.IsPrivate, &user.IsPrivateHearts,
+	)
+
+	if err != nil {
+		if err == sql.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
+
+		if err == context.Canceled {
+			http.Error(w, "Request was canceled", http.StatusRequestTimeout)
+			return
+		} else if err == context.DeadlineExceeded {
+			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
+			return
+		}
+
+		log.Printf("Error fetching user data: %v", err)
+
 		http.Error(w, "Error fetching user data", http.StatusInternalServerError)
 		return
 	}
 
-	err := result.Decode(&user)
-	if err != nil {
-		http.Error(w, "Error decoding user data", http.StatusInternalServerError)
+	if user.IsPrivate {
+		response := map[string]interface{}{
+			"username":       user.Username,
+			"displayname":    user.DisplayName,
+			"profilePicture": user.ProfilePicture,
+			"profileBanner":  user.ProfileBanner,
+			"bio":            user.Bio,
+			"followersCount": len(user.Followers),
+			"followingCount": len(user.Following),
+		}
+
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Initialize response with user details
 	response := map[string]interface{}{
 		"username":       user.Username,
 		"displayname":    user.DisplayName,
@@ -149,55 +156,76 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		"isDeveloper":    user.IsDeveloper,
 		"isOwner":        user.IsOwner,
 		"isBanned":       user.IsBanned,
-		"isModerator":    user.IsModerator,
 		"isPartner":      user.IsPartner,
+		"isModerator":    user.IsModerator,
 		"bio":            user.Bio,
 		"createdAt":      user.CreatedAt,
 		"profilePicture": user.ProfilePicture,
+		"isPrivate":      user.IsPrivate,
 		"profileBanner":  user.ProfileBanner,
 		"followersCount": len(user.Followers),
 		"followingCount": len(user.Following),
-		"links":          user.Links,
 	}
 
-	// If the user is private, return minimal data
-	if user.IsPrivate {
-		response["message"] = "This account is private"
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	// Helper function to resolve user IDs to usernames
-	userIDToUsername := make(map[string]string)
-	getUsername := func(id string) (string, error) {
+	userIDToUsername := make(map[uuid.UUID]string)
+	getUsername := func(id uuid.UUID) (string, error) {
 		if username, found := userIDToUsername[id]; found {
 			return username, nil
 		}
-		var u types.User
-		err := userCollection.FindOne(r.Context(), bson.M{"id": id}).Decode(&u)
+
+		var username string
+		query := `SELECT username FROM users WHERE id = $1`
+		err := db.QueryRowContext(r.Context(), query, id).Scan(&username)
+
 		if err != nil {
-			if err == mongo.ErrNoDocuments {
+			if err == sql.ErrNoRows {
 				return "Unknown User", nil
 			}
 			return "", err
 		}
-		userIDToUsername[id] = u.Username
-		return u.Username, nil
+
+		userIDToUsername[id] = username
+		return username, nil
 	}
 
-	// Helper function to process post data
-	processPost := func(post types.Post, author types.User) (map[string]interface{}, error) {
-		// Resolve usernames in hearts
+	if action == "info" {
+		response := map[string]interface{}{
+			"username":       user.Username,
+			"displayname":    user.DisplayName,
+			"bio":            user.Bio,
+			"isVerified":     user.IsVerified,
+			"isOrganisation": user.IsOrganisation,
+			"isDeveloper":    user.IsDeveloper,
+			"isOwner":        user.IsOwner,
+			"isBanned":       user.IsBanned,
+			"profilePicture": user.ProfilePicture,
+			"profileBanner":  user.ProfileBanner,
+			"followersCount": len(user.Followers),
+			"followingCount": len(user.Following),
+			"createdAt":      user.CreatedAt,
+			"links":          user.Links,
+			"isPrivate":      user.IsPrivate,
+		}
+
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	processPost := func(post types.Post, author types.Author) (map[string]interface{}, error) {
 		var hearts []string
 		for _, heartID := range post.Hearts {
-			username, err := getUsername(heartID)
+			id, err := uuid.Parse(heartID)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing heart ID: %v", err)
+			}
+
+			username, err := getUsername(id)
 			if err != nil {
 				return nil, fmt.Errorf("error resolving heart usernames: %v", err)
 			}
 			hearts = append(hearts, username)
 		}
 
-		// Process poll data if present
 		if post.Poll != nil {
 			totalVotes := 0
 			for i := range post.Poll {
@@ -214,7 +242,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Construct post data
 		return map[string]interface{}{
 			"_id":     post.ID,
 			"title":   post.Title,
@@ -226,7 +253,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 				"profileBanner":  author.ProfileBanner,
 				"profilePicture": author.ProfilePicture,
 				"isDeveloper":    author.IsDeveloper,
-				"isPartner":      author.IsPartner,
 				"isOwner":        author.IsOwner,
 				"isModerator":    author.IsModerator,
 			},
@@ -240,11 +266,31 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 	// Handle "followers" or "following" actions
 	if action == "followers" || action == "following" {
-		var userIDs []string
+		if user.IsPrivate {
+			response["message"] = "This account is private"
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+
+		var userIDs []uuid.UUID
 		if action == "followers" {
-			userIDs = user.Followers
+			for _, follower := range user.Followers {
+				id, err := uuid.Parse(follower)
+				if err != nil {
+					http.Error(w, "Error parsing follower ID", http.StatusInternalServerError)
+					return
+				}
+				userIDs = append(userIDs, id)
+			}
 		} else {
-			userIDs = user.Following
+			for _, followee := range user.Following {
+				id, err := uuid.Parse(followee)
+				if err != nil {
+					http.Error(w, "Error parsing following ID", http.StatusInternalServerError)
+					return
+				}
+				userIDs = append(userIDs, id)
+			}
 		}
 
 		var usernames []string
@@ -263,6 +309,70 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Query posts that are indexed (isIndexed = true)
+	var posts []map[string]interface{}
+	rows, err := db.QueryContext(r.Context(), `
+		SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, "isIndexed"
+		FROM post
+		WHERE "isIndexed" = true
+		AND author = $1
+		ORDER BY createdat DESC`, user.ID)
+	if err != nil {
+		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var post types.Post
+		var commentsJSON []byte
+		var pollJSON json.RawMessage
+		var scheduledFor pq.NullTime
+		err := rows.Scan(
+			&post.ID, &post.Title, &post.Content, &post.Author, &post.Coterie, &scheduledFor,
+			pq.Array(&post.Image), &pollJSON, &post.CreatedAt, pq.Array(&post.Hearts),
+			&commentsJSON, &post.Indexing,
+		)
+		if err != nil {
+			http.Error(w, "Error decoding post data"+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
+			http.Error(w, "Error decoding poll data: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if scheduledFor.Valid {
+			post.ScheduledFor = scheduledFor.Time
+		} else {
+			post.ScheduledFor = time.Time{}
+		}
+
+		if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
+			http.Error(w, "Error decoding comments data: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		var author types.Author
+		err = db.QueryRowContext(r.Context(), `
+				SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator
+				FROM users WHERE id = $1
+			`, post.Author).Scan(
+			&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
+			&author.IsDeveloper, &author.IsOwner, &author.IsModerator,
+		)
+		if err != nil {
+			http.Error(w, "Error fetching author data", http.StatusInternalServerError)
+			return
+		}
+
+		postData, err := processPost(post, author)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		posts = append(posts, postData)
+	}
+
 	// Handle "hearts" action
 	if action == "hearts" {
 		if user.IsPrivateHearts {
@@ -273,30 +383,41 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var heartedPosts []map[string]interface{}
-		postCollection := db.Database("SocialFlux").Collection("posts")
-		cursor, err := postCollection.Find(r.Context(), bson.M{"hearts": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
+		rows, err := db.QueryContext(r.Context(), `
+				SELECT p.id, p.title, p.content, p.author, p.image, p.poll, p.createdat, p.hearts
+				FROM post p
+				JOIN unnest(p.hearts) h ON h = $1
+				WHERE p."isIndexed" = true
+				ORDER BY p.createdat DESC
+			`, user.ID)
 		if err != nil {
 			http.Error(w, "Failed to fetch hearted posts", http.StatusInternalServerError)
 			return
 		}
-		defer cursor.Close(r.Context())
+		defer rows.Close()
 
-		for cursor.Next(r.Context()) {
+		for rows.Next() {
 			var post types.Post
-			err := cursor.Decode(&post)
+			var pollJSON json.RawMessage
+			err := rows.Scan(&post.ID, &post.Title, &post.Content, &post.Author, pq.Array(&post.Image), &pollJSON, &post.CreatedAt, pq.Array(&post.Hearts))
 			if err != nil {
 				http.Error(w, "Error decoding post data", http.StatusInternalServerError)
 				return
 			}
-
-			// Skip non-indexable posts
-			if !post.Indexing {
-				continue
+			// Process the poll data
+			if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
+				http.Error(w, "Error decoding poll data", http.StatusInternalServerError)
+				return
 			}
 
-			// Fetch author details
-			var author types.User
-			err = userCollection.FindOne(r.Context(), bson.M{"id": post.Author}).Decode(&author)
+			var author types.Author
+			err = db.QueryRowContext(r.Context(), `
+					SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator
+					FROM users WHERE id = $1
+				`, post.Author).Scan(
+				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
+				&author.IsDeveloper, &author.IsOwner, &author.IsModerator,
+			)
 			if err != nil {
 				http.Error(w, "Error fetching author data", http.StatusInternalServerError)
 				return
@@ -316,47 +437,12 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle "posts" or default action
-	if action == "" || action == "posts" {
-		var posts []map[string]interface{}
-		postCollection := db.Database("SocialFlux").Collection("posts")
-		cursor, err := postCollection.Find(r.Context(), bson.M{"author": user.ID}, options.Find().SetSort(bson.D{{Key: "createdAt", Value: -1}}))
-		if err != nil {
-			http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
-			return
-		}
-		defer cursor.Close(r.Context())
-
-		for cursor.Next(r.Context()) {
-			var post types.Post
-			err := cursor.Decode(&post)
-			if err != nil {
-				http.Error(w, "Error decoding post data", http.StatusInternalServerError)
-				return
-			}
-
-			// Skip non-indexable posts
-			if !post.Indexing {
-				continue
-			}
-
-			postData, err := processPost(post, user)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			posts = append(posts, postData)
-		}
-
-		response["posts"] = posts
-	}
-
-	// Final response
+	response["posts"] = posts
 	json.NewEncoder(w).Encode(response)
 }
 
 func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
@@ -369,85 +455,88 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve update parameters
-	updateFields := bson.M{}
+	// Prepare update fields
+	var displayName, bio, profilePicture, profileBanner *string
+	var links []string
 
-	// Helper function to decode and add fields to updateFields
-	decodeAndAddField := func(param string, field string) {
-		if value := r.URL.Query().Get(param); value != "" {
-			decoded, err := url.QueryUnescape(value)
-			if err == nil {
-				updateFields[field] = decoded
-			}
-		}
-	}
-
-	decodeAndAddField("displayName", "displayName")
-	decodeAndAddField("bio", "bio")
-	decodeAndAddField("profilePicture", "profilePicture")
-	decodeAndAddField("profileBanner", "profileBanner")
-
-	// Handle links
-	if links := r.URL.Query().Get("links"); links != "" {
-		decodedLinks, err := url.QueryUnescape(links)
+	if value := r.URL.Query().Get("displayName"); value != "" {
+		decoded, err := url.QueryUnescape(value)
 		if err == nil {
-			updateFields["links"] = strings.Split(decodedLinks, ",")
+			displayName = &decoded
 		}
 	}
-
-	// Handle IsOrganisation
-	if isOrgQueryParam := r.URL.Query().Get("isOrganisation"); isOrgQueryParam != "" {
-		if isOrg, err := strconv.ParseBool(isOrgQueryParam); err == nil {
-			updateFields["isOrganisation"] = isOrg
+	if value := r.URL.Query().Get("bio"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			bio = &decoded
+		}
+	}
+	if value := r.URL.Query().Get("profilePicture"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			profilePicture = &decoded
+		}
+	}
+	if value := r.URL.Query().Get("profileBanner"); value != "" {
+		decoded, err := url.QueryUnescape(value)
+		if err == nil {
+			profileBanner = &decoded
+		}
+	}
+	if linksParam := r.URL.Query().Get("links"); linksParam != "" {
+		decodedLinks, err := url.QueryUnescape(linksParam)
+		if err == nil {
+			links = strings.Split(decodedLinks, ",")
 		}
 	}
 
 	// Perform update operation
-	usersCollection := db.Database("SocialFlux").Collection("users")
-	filter := bson.M{"id": userID}
-	update := bson.M{"$set": updateFields}
-
-	result, err := usersCollection.UpdateOne(r.Context(), filter, update)
+	query := `
+		UPDATE users 
+		SET 
+			displayName = COALESCE($1, displayName), 
+			bio = COALESCE($2, bio), 
+			profilePicture = COALESCE($3, profilePicture), 
+			profileBanner = COALESCE($4, profileBanner), 
+			links = COALESCE($5, links) 
+		WHERE id = $6`
+	_, err = db.ExecContext(r.Context(), query, displayName, bio, profilePicture, profileBanner, pq.Array(links), userID)
 	if err != nil {
-		http.Error(w, "Failed to update user profile", http.StatusInternalServerError)
+		http.Error(w, "Failed to update user profile: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if result.ModifiedCount == 0 {
-		http.Error(w, "User not found or no changes made", http.StatusNotFound)
-		return
-	}
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Send success response
+	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Profile settings updated successfully!",
-		"updates": updateFields,
 	})
 }
 
 func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*mongo.Client)
+	db := r.Context().Value("db").(*sql.DB)
 
 	username := r.URL.Query().Get("username")
 	action := r.URL.Query().Get("action") // This could be either "follow" or "unfollow"
 
-	userCollection := db.Database("SocialFlux").Collection("users")
-
-	encrypteduserId := r.Header.Get("X-userID")
-	if encrypteduserId == "" {
-		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
-		return
-	}
-	followerID, err := middlewares.DecryptAES(encrypteduserId)
-	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+	encryptedUserId := r.Header.Get("X-userID")
+	if encryptedUserId == "" {
+		http.Error(w, "userId header is required", http.StatusBadRequest)
 		return
 	}
 
-	// Find the user to be followed/unfollowed
-	var userToBeUpdated bson.M
-	err = userCollection.FindOne(r.Context(), bson.M{"username": username}).Decode(&userToBeUpdated)
+	followerID, err := middlewares.DecryptAES(encryptedUserId)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
+		return
+	}
+
+	var userToBeUpdated struct {
+		ID        string         `json:"id"`
+		Followers pq.StringArray `json:"followers"`
+	}
+	err = db.QueryRow("SELECT id, followers FROM users WHERE username = $1", username).Scan(&userToBeUpdated.ID, &userToBeUpdated.Followers)
+	if err != nil {
+		if err == sql.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
@@ -455,11 +544,13 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the follower user
-	var followerUser bson.M
-	err = userCollection.FindOne(r.Context(), bson.M{"id": followerID}).Decode(&followerUser)
+	var followerUser struct {
+		ID        string         `json:"id"`
+		Following pq.StringArray `json:"following"`
+	}
+	err = db.QueryRow("SELECT id, following FROM users WHERE id = $1", followerID).Scan(&followerUser.ID, &followerUser.Following)
 	if err != nil {
-		if err == mongo.ErrNoDocuments {
+		if err == sql.ErrNoRows {
 			http.Error(w, "Follower not found", http.StatusNotFound)
 			return
 		}
@@ -467,109 +558,95 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the follower user is banned
-	if isBanned, ok := followerUser["isbanned"].(bool); ok && isBanned {
-		http.Error(w, "Hey there, you are banned from using NetSocial's services.", http.StatusForbidden)
+	var isBanned bool
+	err = db.QueryRow("SELECT isbanned FROM users WHERE id = $1", followerID).Scan(&isBanned)
+	if err != nil {
+		http.Error(w, "Error checking user status", http.StatusInternalServerError)
+		return
+	}
+	if isBanned {
+		http.Error(w, "You are banned from following users.", http.StatusForbidden)
 		return
 	}
 
-	// Check if the followerID is the same as the userToBeUpdated ID
-	if userToBeUpdated["id"] == followerUser["id"] {
-		http.Error(w, "My guy, you can't follow yourself! That's cheating!!", http.StatusBadRequest)
+	if userToBeUpdated.ID == followerUser.ID {
+		http.Error(w, "my guy you can't follow yourself!", http.StatusBadRequest)
 		return
 	}
 
-	// Initialize followers and following if they are nil
-	if userToBeUpdated["followers"] == nil {
-		_, err := userCollection.UpdateOne(r.Context(), bson.M{"username": username}, bson.M{"$set": bson.M{"followers": bson.A{}}})
-		if err != nil {
-			http.Error(w, "Failed to initialize followers list", http.StatusInternalServerError)
-			return
-		}
-		userToBeUpdated["followers"] = bson.A{} // Update local variable to reflect change
+	if userToBeUpdated.Followers == nil {
+		userToBeUpdated.Followers = pq.StringArray{}
 	}
-	if followerUser["following"] == nil {
-		_, err := userCollection.UpdateOne(r.Context(), bson.M{"id": followerID}, bson.M{"$set": bson.M{"following": bson.A{}}})
-		if err != nil {
-			http.Error(w, "Failed to initialize following list", http.StatusInternalServerError)
-			return
-		}
-		followerUser["following"] = bson.A{} // Update local variable to reflect change
+	if followerUser.Following == nil {
+		followerUser.Following = pq.StringArray{}
 	}
 
-	// Check if the follower is already following the user
-	followers := userToBeUpdated["followers"].(bson.A)
 	isAlreadyFollowing := false
-	for _, f := range followers {
-		if f == followerID {
+	for _, follower := range userToBeUpdated.Followers {
+		if follower == followerID {
 			isAlreadyFollowing = true
 			break
 		}
 	}
 
 	if action == "follow" && isAlreadyFollowing {
-		http.Error(w, fmt.Sprintf("My guy, you are already following %s", username), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("You are already following %s", username), http.StatusBadRequest)
 		return
 	}
 
 	if action == "unfollow" && !isAlreadyFollowing {
-		http.Error(w, fmt.Sprintf("My guy, you aren't even following %s", username), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("You are not following %s", username), http.StatusBadRequest)
 		return
 	}
 
-	// Determine the update operation based on the action
-	var followedUserUpdate bson.M
-	var followerUserUpdate bson.M
+	var updateFollowers pq.StringArray
+	var updateFollowing pq.StringArray
 
 	if action == "follow" {
-		// Add follower's user ID to the user's followers list
-		followedUserUpdate = bson.M{"$addToSet": bson.M{"followers": followerID}}
-		// Add followed user's ID to the follower's following list
-		followerUserUpdate = bson.M{"$addToSet": bson.M{"following": userToBeUpdated["id"]}}
+		updateFollowers = append(userToBeUpdated.Followers, followerID)
+		updateFollowing = append(followerUser.Following, userToBeUpdated.ID)
 	} else if action == "unfollow" {
-		// Remove follower's user ID from the user's followers list
-		followedUserUpdate = bson.M{"$pull": bson.M{"followers": followerID}}
-		// Remove followed user's ID from the follower's following list
-		followerUserUpdate = bson.M{"$pull": bson.M{"following": userToBeUpdated["id"]}}
+		updateFollowers = removeFromArray(userToBeUpdated.Followers, followerID)
+		updateFollowing = removeFromArray(followerUser.Following, userToBeUpdated.ID)
 	} else {
 		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
 	}
 
-	// Update the user being followed/unfollowed
-	followedUserFilter := bson.M{"username": username}
-	_, err = userCollection.UpdateOne(r.Context(), followedUserFilter, followedUserUpdate)
+	_, err = db.Exec("UPDATE users SET followers = $1 WHERE id = $2", pq.Array(updateFollowers), userToBeUpdated.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating followers list for user %s: %v", username, err), http.StatusInternalServerError)
 		return
 	}
 
-	// Update the follower user
-	followerUserFilter := bson.M{"id": followerID}
-	_, err = userCollection.UpdateOne(r.Context(), followerUserFilter, followerUserUpdate)
+	_, err = db.Exec("UPDATE users SET following = $1 WHERE id = $2", pq.Array(updateFollowing), followerUser.ID)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", followerUser["username"], err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", username, err), http.StatusInternalServerError)
 		return
 	}
 
-	// Format the success message
+	// Respond with success
 	actionMessage := "followed"
 	if action == "unfollow" {
 		actionMessage = "unfollowed"
 	}
-
-	// Use fmt.Sprintf to format the success message correctly
 	successMessage := fmt.Sprintf("Successfully %s %s", actionMessage, username)
-
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": successMessage})
 }
 
-func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
-	// Get the MongoDB client from the request context
-	db := r.Context().Value("db").(*mongo.Client)
+func removeFromArray(arr pq.StringArray, value string) pq.StringArray {
+	for i, v := range arr {
+		if v == value {
+			return append(arr[:i], arr[i+1:]...)
+		}
+	}
+	return arr
+}
 
-	// Retrieve the userId from header
+func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value("db").(*sql.DB)
+
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
 		http.Error(w, "userId header is required", http.StatusBadRequest)
@@ -581,93 +658,71 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set up a context with a timeout to avoid long-running operations
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	// Get the users collection
-	usersCollection := db.Database("SocialFlux").Collection("users")
-
-	// Find the user by ID and retrieve the current value of privacy settings
-	var user bson.M
-	err = usersCollection.FindOne(ctx, bson.M{"id": userID}).Decode(&user)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			http.Error(w, "User not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
-		return
-	}
-
-	// Retrieve the action parameter from the query string
 	action := r.Header.Get("X-action")
 	if action == "" {
 		http.Error(w, "action parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Prepare the update document
-	update := bson.M{}
+	var currentPrivacy bool
 
-	// Define possible actions and handle them
 	switch action {
 	case "togglePrivateHearts":
-		// Check if 'isPrivateHearts' exists and is a bool, if not, set it to false
-		isPrivateHearts, ok := user["isPrivateHearts"].(bool)
-		if !ok {
-			// If it doesn't exist or is not a bool, set it to false
-			update["$set"] = bson.M{"isPrivateHearts": false}
-			isPrivateHearts = false
+		err = db.QueryRowContext(r.Context(), `SELECT "isPrivateHearts" FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
+			return
 		}
 
-		// Toggle the value
-		update["$set"] = bson.M{"isPrivateHearts": !isPrivateHearts}
+		newPrivacySetting := !currentPrivacy
+
+		_, err = db.ExecContext(r.Context(), `UPDATE users SET "isPrivateHearts" = $1 WHERE id = $2`, newPrivacySetting, userID)
+		if err != nil {
+			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		response := map[string]interface{}{
+			"message":            "Privacy setting updated successfully",
+			"isPrivateHeartsNow": newPrivacySetting,
+		}
+		json.NewEncoder(w).Encode(response)
 
 	case "togglePrivateAccount":
-		// Check if 'isPrivate' exists and is a bool, if not, set it to false
-		isPrivate, ok := user["isPrivate"].(bool)
-		if !ok {
-			// If it doesn't exist or is not a bool, set it to false
-			update["$set"] = bson.M{"isPrivate": false}
-			isPrivate = false
+		err = db.QueryRowContext(r.Context(), `SELECT "isPrivate" FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				http.Error(w, "User not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
+			return
 		}
 
-		// Toggle the value
-		update["$set"] = bson.M{"isPrivate": !isPrivate}
+		newPrivacySetting := !currentPrivacy
+
+		_, err = db.ExecContext(r.Context(), `UPDATE users SET "isPrivate" = $1 WHERE id = $2`, newPrivacySetting, userID)
+		if err != nil {
+			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		response := map[string]interface{}{
+			"message":      "Privacy setting updated successfully",
+			"isPrivateNow": newPrivacySetting,
+		}
+		json.NewEncoder(w).Encode(response)
 
 	default:
 		http.Error(w, "Invalid action parameter", http.StatusBadRequest)
 		return
 	}
-
-	// Perform the update if any changes were made
-	if len(update) > 0 {
-		_, err = usersCollection.UpdateOne(ctx, bson.M{"id": userID}, update, options.Update().SetUpsert(false))
-		if err != nil {
-			http.Error(w, "Failed to update privacy settings", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// Respond with the updated privacy settings
-	w.WriteHeader(http.StatusOK)
-	response := map[string]interface{}{
-		"message": "Privacy setting updated successfully",
-	}
-
-	// Include the updated settings in the response
-	if action == "togglePrivateHearts" {
-		// Return the updated isPrivateHearts value (opposite of what it was)
-		response["isPrivateHeartsNow"] = !user["isPrivateHearts"].(bool)
-	}
-
-	if action == "togglePrivateAccount" {
-		// Return the updated isPrivate value (opposite of what it was)
-		response["isPrivateNow"] = !user["isPrivate"].(bool)
-	}
-
-	json.NewEncoder(w).Encode(response)
 }
 
 func User(r *chi.Mux) {

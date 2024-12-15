@@ -51,8 +51,6 @@ func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
 	description := fmt.Sprintf("A request resulted in an error with status code %d.", statusCode)
 	statusText := http.StatusText(statusCode)
 	redactedURL := redactSensitiveParameters(r.URL)
-
-	userAgent := r.UserAgent()
 	currentTime := time.Now().Format(time.RFC3339)
 
 	embed := discordwebhook.Embed{
@@ -66,10 +64,6 @@ func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
 			{
 				Name:  ptr("Request URL"),
 				Value: &redactedURL,
-			},
-			{
-				Name:  ptr("User Agent"),
-				Value: &userAgent,
 			},
 			{
 				Name:  ptr("Time"),
