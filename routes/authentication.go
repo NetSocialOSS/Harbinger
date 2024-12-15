@@ -534,49 +534,69 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
+	// Define the structure to parse incoming JSON
 	var logoutData struct {
 		SessionID string `json:"sessionId"`
 		UserID    string `json:"userId"`
 	}
+
+	// Decode the request body
 	if err := json.NewDecoder(r.Body).Decode(&logoutData); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	userID, err := uuid.Parse(logoutData.UserID)
+	// Parse UserID
+	decrypteduserID, err := middlewares.DecryptAES(logoutData.UserID)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := uuid.Parse(decrypteduserID)
 	if err != nil {
 		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 
+	// Parse SessionID
 	sessionID, err := uuid.Parse(logoutData.SessionID)
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
 
-	db := r.Context().Value("db").(*sql.DB)
+	// Retrieve database connection from context
+	db, ok := r.Context().Value("db").(*sql.DB)
+	if !ok {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
+	// Execute the query to delete the session
 	result, err := db.Exec(`
 		DELETE FROM sessions 
-		WHERE sessionid = $1 AND user_id = $2
+		WHERE sessionid = $1 AND userid = $2
 	`, sessionID.String(), userID.String())
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
+	// Check the number of affected rows
 	rowsAffected, err := result.RowsAffected()
 	if err != nil {
 		http.Error(w, "Failed to get rows affected", http.StatusInternalServerError)
 		return
 	}
 
+	// Handle case where session was not found
 	if rowsAffected == 0 {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
+	// Clear the token cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
@@ -586,7 +606,12 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 
-	json.NewEncoder(w).Encode(map[string]string{"message": "Session revoked and user logged out successfully"})
+	// Send success response
+	response := map[string]string{"message": "Session revoked and user logged out successfully"}
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to send response", http.StatusInternalServerError)
+		return
+	}
 }
 
 func generateTemporaryPassword() (string, error) {
