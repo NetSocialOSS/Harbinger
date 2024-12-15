@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -248,7 +249,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		}
 		defer rows.Close()
 		var scheduledFor pq.NullTime
-		var pollJSON json.RawMessage
+		var pollJSON *json.RawMessage
 		var commentsJSON []byte
 
 		for rows.Next() {
@@ -259,16 +260,23 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Attempt to unmarshal the comments JSONB
-			if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
-				// Include the actual error message in the response for debugging
-				http.Error(w, "Error decoding comments data: "+err.Error(), http.StatusInternalServerError)
-				return
+			// Attempt to unmarshal the comments JSONB, check if commentsJSON is not nil or empty
+			if len(commentsJSON) > 0 {
+				if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
+					http.Error(w, "Error decoding comments data: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				// If commentsJSON is empty or nil, initialize it as an empty slice
+				post.Comments = []types.Comment{}
 			}
 
-			if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
-				http.Error(w, "Error decoding poll data: "+err.Error(), http.StatusInternalServerError)
-				return
+			// Only unmarshal poll if it is not nil
+			if pollJSON != nil {
+				if err := json.Unmarshal(*pollJSON, &post.Poll); err != nil {
+					http.Error(w, "Error decoding poll data: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 
 			if scheduledFor.Valid {
@@ -433,9 +441,13 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user exists
 	var user types.User
-	err = db.QueryRow("SELECT * FROM users WHERE id = $1", userID).Scan(&user)
+	err = db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&user.Username)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -446,7 +458,7 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 
 	// Find coterie
 	var coterie types.Coterie
-	err = db.QueryRow("SELECT * FROM coterie WHERE name = $1", coterieName).Scan(&coterie)
+	err = db.QueryRow("SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.Name)
 	if err != nil {
 		http.Error(w, "Coterie not found", http.StatusNotFound)
 		return
@@ -671,44 +683,66 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find member and coterie
-	var memberID string
-	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, membername).Scan(&memberID)
+	// Find member
+	var member types.User
+	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, membername).Scan(&member.ID)
 	if err != nil {
 		http.Error(w, "Member not found", http.StatusNotFound)
 		return
 	}
 
+	// Find coterie and roles
 	var coterie types.Coterie
-	err = db.QueryRow(`SELECT id, members, roles, warningDetails FROM coterie WHERE name = $1`, coterieName).Scan(&coterie.ID, &coterie.Members, &coterie.Roles, &coterie.WarningDetails)
+	var warningDetailsJson []byte
+	var owner string
+	var rolesText sql.NullString
+	err = db.QueryRow(`
+		SELECT id, members, warningDetails, roles, owner
+		FROM coterie WHERE name = $1
+	`, coterieName).Scan(&coterie.ID, pq.Array(&coterie.Members), &warningDetailsJson, &rolesText, &owner)
 	if err != nil {
 		http.Error(w, "Coterie not found", http.StatusNotFound)
 		return
 	}
 
-	// Check if the user is authorized to warn
+	if len(warningDetailsJson) > 0 {
+		err = json.Unmarshal(warningDetailsJson, &coterie.WarningDetails)
+		if err != nil {
+			http.Error(w, "Failed to process warning details", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	isAuthorized := false
-	for _, owner := range coterie.Roles["owners"] {
-		if owner == modIDStr {
+
+	roles := []string{}
+	if rolesText.Valid {
+		roles = append([]string{owner}, strings.Split(rolesText.String, ",")...)
+	} else {
+		roles = []string{owner}
+	}
+
+	for _, role := range roles {
+		if role == modIDStr {
 			isAuthorized = true
 			break
 		}
 	}
+
 	if !isAuthorized {
-		http.Error(w, "Unauthorized. Only owners can warn members.", http.StatusUnauthorized)
+		http.Error(w, "Unauthorized. Only owners, admins, or moderators can warn members.", http.StatusUnauthorized)
 		return
 	}
 
-	// Update the coterie with the warning details
 	_, err = db.Exec(`
-			UPDATE coterie
-			SET warningDetails = jsonb_set(
-					warningDetails,
-					array[$1],
-					jsonb_build_object('reason', $2, 'time', $3)
-			)
-			WHERE name = $4`,
-		memberID, reason, time.Now().Format(time.RFC3339), coterieName)
+	UPDATE coterie
+	SET warningDetails = jsonb_set(
+			warningDetails,
+			array[$1],
+			jsonb_build_object('reason', $2::text, 'time', $3::timestamp)
+	)
+	WHERE name = $4`,
+		member.UserID, reason, time.Now().Format(time.RFC3339), coterieName)
 
 	if err != nil {
 		http.Error(w, "Failed to warn member", http.StatusInternalServerError)
@@ -721,6 +755,7 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ff
 func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*sql.DB)
 
@@ -878,19 +913,22 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 	username := r.URL.Query().Get("username")
 	encryptedUserID := r.Header.Get("X-userID")
 
+	// Decrypt the moderator ID
 	modID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
 		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
 		return
 	}
 
+	// Get the moderator ID
 	var modIDStr string
-	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, modID).Scan(&modIDStr)
+	err = db.QueryRow(`SELECT id FROM users WHERE id = $1`, modID).Scan(&modIDStr)
 	if err != nil {
 		http.Error(w, "Moderator not found", http.StatusNotFound)
 		return
 	}
 
+	// Get the user ID to ban
 	var userID string
 	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&userID)
 	if err != nil {
@@ -913,13 +951,21 @@ func BanUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Mark user as banned in users table
+	// Remove user from members array in coterie table
+	_, err = db.Exec(`UPDATE coterie SET members = array_remove(members, $1) WHERE name = $2`, userID, coterieName)
+	if err != nil {
+		http.Error(w, "Error removing user from coterie members", http.StatusInternalServerError)
+		return
+	}
+
+	// Mark the user as banned in the users table
 	_, err = db.Exec(`UPDATE users SET isbanned = true WHERE id = $1`, userID)
 	if err != nil {
 		http.Error(w, "Error banning user", http.StatusInternalServerError)
 		return
 	}
 
+	// Respond to the client
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"message": "User '%s' has been banned from coterie '%s' by moderator '%s'"}`, username, coterieName, modIDStr)
 }
