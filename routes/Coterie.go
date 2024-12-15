@@ -552,16 +552,19 @@ func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// UpdateCoterie function
 func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
+	// Extract database connection from context
 	db := r.Context().Value("db").(*sql.DB)
 
+	// Parse query parameters
 	newName := r.URL.Query().Get("newName")
 	coterieName := r.URL.Query().Get("name")
 	newDescription := r.URL.Query().Get("newDescription")
-	encryptedUserID := r.Header.Get("X-userID")
 	newBanner := r.URL.Query().Get("newBanner")
 	newAvatar := r.URL.Query().Get("newAvatar")
 	isChatAllowedStr := r.URL.Query().Get("isChatAllowed")
+	encryptedUserID := r.Header.Get("X-userID")
 
 	// Decrypt and parse the user ID
 	ownerID, err := middlewares.DecryptAES(encryptedUserID)
@@ -576,59 +579,81 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build dynamic SQL update query
 	updateFields := []string{}
 	updateValues := []interface{}{}
 
+	// Dynamically construct the SQL update fields and parameters
+	index := 1
 	if newName != "" {
-		updateFields = append(updateFields, "name = $1")
+		updateFields = append(updateFields, fmt.Sprintf("name = $%d", index))
 		updateValues = append(updateValues, newName)
+		index++
 	}
 	if newDescription != "" {
-		updateFields = append(updateFields, "description = $2")
+		updateFields = append(updateFields, fmt.Sprintf("description = $%d", index))
 		updateValues = append(updateValues, newDescription)
+		index++
 	}
 	if newBanner != "" {
-		updateFields = append(updateFields, "banner = $3")
+		updateFields = append(updateFields, fmt.Sprintf("banner = $%d", index))
 		updateValues = append(updateValues, newBanner)
+		index++
 	}
 	if newAvatar != "" {
-		updateFields = append(updateFields, "avatar = $4")
+		updateFields = append(updateFields, fmt.Sprintf("avatar = $%d", index))
 		updateValues = append(updateValues, newAvatar)
+		index++
 	}
-
 	if isChatAllowedStr != "" {
 		isChatAllowed, err := strconv.ParseBool(isChatAllowedStr)
 		if err != nil {
 			http.Error(w, "Invalid value for IsChatAllowed, must be true or false", http.StatusBadRequest)
 			return
 		}
-		updateFields = append(updateFields, "isChatAllowed = $5")
+		updateFields = append(updateFields, fmt.Sprintf("\"isChatAllowed\" = $%d", index))
 		updateValues = append(updateValues, isChatAllowed)
+		index++
 	}
 
-	// Construct the SQL query dynamically based on the fields to update
+	if len(updateFields) == 0 {
+		http.Error(w, "No fields to update", http.StatusBadRequest)
+		return
+	}
+
+	// Construct the final query
 	query := fmt.Sprintf(`
 			UPDATE coterie
 			SET %s
-			WHERE name = $%d AND owner = $%d
-			RETURNING *`,
-		strings.Join(updateFields, ", "), len(updateFields)+1, len(updateFields)+2)
+			WHERE LOWER(name) = LOWER($%d) AND owner = $%d
+			RETURNING id, name, description, banner, avatar, "isChatAllowed", owner`,
+		strings.Join(updateFields, ", "), index, index+1)
 
 	updateValues = append(updateValues, coterieName, ownerUUID.String())
 
+	// Execute the query
 	row := db.QueryRow(query, updateValues...)
 
 	// Process response and handle errors
 	var coterie types.Coterie
-	if err := row.Scan(&coterie); err != nil {
-		http.Error(w, "Coterie not found or you are not the owner", http.StatusNotFound)
+	if err := row.Scan(&coterie.ID, &coterie.Name, &coterie.Description, &coterie.Banner, &coterie.Avatar, &coterie.IsChatAllowed, &coterie.Owner); err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Coterie not found or you are not the owner", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	// Respond with success
+	response := map[string]interface{}{
 		"message": "Coterie updated successfully",
-		"updates": updateFields,
-	})
+		"coterie": coterie,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 func WarnMember(w http.ResponseWriter, r *http.Request) {
