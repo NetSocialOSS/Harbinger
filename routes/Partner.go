@@ -45,37 +45,36 @@ func GetAllPartner(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// AddNewPartner adds a new partner to the DB
 func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
-		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		http.Error(w, `{"error":"Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
 	encryptedid := r.Header.Get("X-userId")
-	Title := r.URL.Query().Get("title")
+
+	Title := r.URL.Query().Get("name")
 	text := r.URL.Query().Get("description")
 	Link := r.URL.Query().Get("link")
 	Logo := r.URL.Query().Get("logo")
 	Banner := r.URL.Query().Get("banner")
 
-	UserID, err := middlewares.DecryptAES(encryptedid)
+	decryptedUserID, err := middlewares.DecryptAES(encryptedid)
 	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		http.Error(w, `{"error":"Failed to decrypt user ID"}`, http.StatusBadRequest)
 		return
 	}
 
-	_, err = uuid.Parse(UserID)
+	var isDeveloper, isOwner bool
+	err = db.QueryRow(`SELECT isdeveloper, isowner FROM users WHERE id = $1`, decryptedUserID).Scan(&isDeveloper, &isOwner)
 	if err != nil {
-		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
+		http.Error(w, `{"error":"User not found or not authorized"}`, http.StatusForbidden)
 		return
 	}
 
-	var user types.User
-	err = db.QueryRow(`SELECT id, isDeveloper, isOwner FROM users WHERE id = $1`, UserID).Scan(&user.ID, &user.IsDeveloper, &user.IsOwner)
-	if err != nil || !(user.IsDeveloper || user.IsOwner) {
-		http.Error(w, "User not authorized to add partners", http.StatusForbidden)
+	if !(isDeveloper || isOwner) {
+		http.Error(w, `{"error":"User not authorized to add partners"}`, http.StatusForbidden)
 		return
 	}
 
@@ -89,20 +88,25 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.Exec(`
-		INSERT INTO partner (id, title, text, link, banner, logo) 
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+        INSERT INTO partner (id, title, text, link, banner, logo) 
+        VALUES ($1, $2, $3, $4, $5, $6)`,
 		newPartner.ID, newPartner.Title, newPartner.Text, newPartner.Link, newPartner.Banner, newPartner.Logo,
 	)
 	if err != nil {
-		http.Error(w, "Failed to insert partner", http.StatusInternalServerError)
+		http.Error(w, `{"error":"Failed to insert partner"}`, http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(newPartner); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
+
+	response := map[string]interface{}{
+		"success": true,
+		"message": "Partner added successfully",
+	}
+
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		http.Error(w, `{"error":"Failed to encode success response"}`, http.StatusInternalServerError)
 	}
 }
 
