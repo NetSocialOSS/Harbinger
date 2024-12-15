@@ -3,7 +3,6 @@ package routes
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -55,7 +54,6 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 		err = db.QueryRow(`SELECT username, displayName, profilePicture FROM users WHERE id = $1`, authorId).Scan(&user.Username, &user.DisplayName, &user.ProfilePicture)
 
 		if err != nil {
-			log.Println("Warning: Author not found for blog post ID:", blog.ID)
 			continue
 		}
 
@@ -83,7 +81,6 @@ func GetPosts(w http.ResponseWriter, r *http.Request) {
 
 // logAndReturnError logs an error message and writes an error response
 func logAndReturnError(w http.ResponseWriter, msg string, err error) {
-	log.Println(msg+":", err)
 	http.Error(w, msg, http.StatusInternalServerError)
 }
 
@@ -111,7 +108,6 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Since UserID is now a UUID string, we don't need ObjectIDFromHex
 	_, err = uuid.Parse(UserID)
 	if err != nil {
 		http.Error(w, "Invalid user ID format", http.StatusBadRequest)
@@ -126,26 +122,29 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Transform Content into a slice of strings
+	var contentBodies []string
+	for _, entry := range Content {
+		contentBodies = append(contentBodies, entry.Body)
+	}
+
 	// Insert new blog post
 	blogID := uuid.New().String()
 	blogSlug := generateSlug(Title)
 	_, err = db.Exec(`
 		INSERT INTO blogpost (id, slug, title, date, authorId, overview, content) 
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		blogID, blogSlug, Title, time.Now(), UserID, Overview, pq.Array(Content),
+		blogID, blogSlug, Title, time.Now(), UserID, Overview, pq.Array(contentBodies),
 	)
 	if err != nil {
-		logAndReturnError(w, "Failed to insert blog post", err)
+		http.Error(w, "Failed to insert blog post", http.StatusInternalServerError)
 		return
 	}
 
 	// Respond with success
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(map[string]string{"id": blogID}); err != nil {
-		logAndReturnError(w, "Failed to encode response", err)
-		return
-	}
+	json.NewEncoder(w).Encode(map[string]string{"message": "New blog post added successfully", "id": blogID})
 }
 
 // Helper function to generate a slug from the title
