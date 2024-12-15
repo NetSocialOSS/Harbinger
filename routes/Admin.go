@@ -14,6 +14,7 @@ import (
 )
 
 func ManageBadge(w http.ResponseWriter, r *http.Request) {
+	// Get database connection
 	db, ok := r.Context().Value("db").(*sql.DB)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
@@ -26,6 +27,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	encryptedid := r.Header.Get("X-modid")
 	entity := r.Header.Get("X-entity")
 
+	// Decrypt modID
 	modID, err := middlewares.DecryptAES(encryptedid)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
@@ -40,44 +42,34 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check if the mod is an owner or moderator
-	var isOwner, isModerator, isDeveloper bool
-	err = db.QueryRow("SELECT isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator, &isDeveloper)
+	var modUser types.User
+	err = db.QueryRow("SELECT id, isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&modUser.ID, &modUser.IsOwner, &modUser.IsModerator, &modUser.IsDeveloper)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
 	}
 
-	// Check if the mod has permission to manage
-	if !isOwner && !isModerator && !isDeveloper {
+	if !modUser.IsOwner && !modUser.IsModerator && !modUser.IsDeveloper {
 		http.Error(w, `{"error": "Permission denied. Only owners, moderators, or developers can manage badges."}`, http.StatusForbidden)
 		return
 	}
 
-	// Handle entity based on X-entity header
 	switch entity {
 	case "user":
-		// Manage badge for user
 		var user types.User
-		err := db.QueryRow("SELECT * FROM users WHERE username = $1", username).Scan(
-			&user.Username,
-		)
+		err := db.QueryRow("SELECT id FROM users WHERE username = $1", username).Scan(&user.ID)
 		if err != nil {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 			return
 		}
 
-		// Update the user's badge based on action
-		var query string
-		switch action {
-		case "add":
-			query = fmt.Sprintf("UPDATE users SET %s = true WHERE username = $1", getBadgeColumn(badge))
-		case "remove":
-			query = fmt.Sprintf("UPDATE users SET %s = false WHERE username = $1", getBadgeColumn(badge))
-		default:
-			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+		update := handleBadgeUpdateForUser(badge, action)
+		if update == "" {
+			http.Error(w, `{"error": "Invalid badge type"}`, http.StatusBadRequest)
 			return
 		}
 
+		query := "UPDATE users SET " + update + " WHERE username = $1"
 		_, err = db.Exec(query, username)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
@@ -90,29 +82,24 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case "coterie":
-		// Manage badge for coterie
-		// Note: As the coterie table structure wasn't provided, this part remains conceptual
 		coterieName := r.Header.Get("X-username")
-		var query string
-		switch action {
-		case "add":
-			query = "UPDATE coterie SET isorganisation = true WHERE name = $1"
-		case "remove":
-			query = "UPDATE coterie SET isorganisation = false WHERE name = $1"
-		default:
-			http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
+		var coterie types.Coterie
+		err := db.QueryRow("SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.ID)
+		if err != nil {
+			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 			return
 		}
 
-		result, err := db.Exec(query, coterieName)
+		update := handleBadgeUpdateForCoterie(badge, action)
+		if update == "" {
+			http.Error(w, `{"error": "Invalid badge type"}`, http.StatusBadRequest)
+			return
+		}
+
+		query := "UPDATE coterie SET " + update + " WHERE name = $1"
+		_, err = db.Exec(query, coterieName)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update coterie badges"}`, http.StatusInternalServerError)
-			return
-		}
-
-		rowsAffected, _ := result.RowsAffected()
-		if rowsAffected == 0 {
-			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 			return
 		}
 
@@ -126,21 +113,58 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getBadgeColumn(badge string) string {
+func handleBadgeUpdateForUser(badge string, action string) string {
 	switch badge {
 	case "dev":
-		return "isdeveloper"
+		if action == "add" {
+			return "isdeveloper = true"
+		} else if action == "remove" {
+			return "isdeveloper = false"
+		}
 	case "verified":
-		return "isverified"
+		if action == "add" {
+			return "isverified = true"
+		} else if action == "remove" {
+			return "isverified = false"
+		}
 	case "partner":
-		return "ispartner"
+		if action == "add" {
+			return "ispartner = true"
+		} else if action == "remove" {
+			return "ispartner = false"
+		}
 	case "owner":
-		return "isowner"
+		if action == "add" {
+			return "isowner = true"
+		} else if action == "remove" {
+			return "isowner = false"
+		}
 	case "moderator":
-		return "ismoderator"
-	default:
-		return ""
+		if action == "add" {
+			return "ismoderator = true"
+		} else if action == "remove" {
+			return "ismoderator = false"
+		}
 	}
+	return ""
+}
+
+func handleBadgeUpdateForCoterie(badge string, action string) string {
+	switch badge {
+	case "organisation":
+		if action == "add" {
+			return "\"isOrganisation\" = true"
+		} else if action == "remove" {
+			return "\"isOrganisation\" = false"
+		}
+	case "verified":
+		if action == "add" {
+			return "\"isVerified\" = true"
+		} else if action == "remove" {
+			return "\"isVerified\" = false"
+		}
+	}
+	return ""
 }
 
 func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +260,6 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the coterie from the database
-	// Note: As the coterie table structure wasn't provided, this part remains conceptual
 	result, err := db.Exec("DELETE FROM coterie WHERE name = $1", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete coterie"}`, http.StatusInternalServerError)
