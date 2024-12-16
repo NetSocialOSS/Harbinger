@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"netsocial/middlewares"
@@ -126,8 +125,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			return
 		}
-
-		log.Printf("Error fetching user data: %v", err)
 
 		http.Error(w, "Error fetching user data", http.StatusInternalServerError)
 		return

@@ -3,7 +3,6 @@ package routes
 import (
 	"database/sql"
 	"encoding/json"
-	"log"
 	"net/http"
 	"netsocial/middlewares"
 	"netsocial/types"
@@ -87,44 +86,30 @@ func handleLikeUnlike(w http.ResponseWriter, r *http.Request, db *sql.DB, userID
 }
 
 func handleVote(w http.ResponseWriter, r *http.Request, db *sql.DB, userID, postId, optionId string) {
-	log.Println("Action: vote")
-
 	if optionId == "" {
-		log.Println("Error: Option ID is missing")
 		http.Error(w, `{"error": "Option ID is required for voting"}`, http.StatusBadRequest)
 		return
 	}
 
-	log.Printf("Option ID: %s, Post ID: %s, User ID: %s", optionId, postId, userID)
-
-	// Fetch the poll JSON
 	var pollJSON json.RawMessage
 	err := db.QueryRowContext(r.Context(), `SELECT poll FROM post WHERE id = $1`, postId).Scan(&pollJSON)
 	if err != nil {
-		log.Printf("Error fetching poll for post ID %s: %v", postId, err)
 		http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
 		return
 	}
 
-	log.Println("Fetched poll JSON:", string(pollJSON))
-
 	var poll types.Poll
 	err = json.Unmarshal(pollJSON, &poll)
 	if err != nil || len(poll.Options) == 0 {
-		log.Printf("Error unmarshalling poll JSON or no options found: %v", err)
 		http.Error(w, `{"error": "No poll found for this post"}`, http.StatusNotFound)
 		return
 	}
 
-	log.Printf("Poll expiration: %v, Current time: %v", poll.Expiration, time.Now())
-
 	if poll.Expiration.Before(time.Now()) {
-		log.Println("Error: Poll has expired")
 		http.Error(w, `{"error": "Poll has expired"}`, http.StatusForbidden)
 		return
 	}
 
-	// Check if user has already voted
 	var alreadyVoted bool
 	voteCheckQuery := `
     WITH options AS (
@@ -141,20 +126,15 @@ func handleVote(w http.ResponseWriter, r *http.Request, db *sql.DB, userID, post
 `
 	err = db.QueryRowContext(r.Context(), voteCheckQuery, optionId, userID, postId).Scan(&alreadyVoted)
 	if err != nil {
-		log.Printf("Error checking if user already voted: %v", err)
 		http.Error(w, `{"error": "Failed to check vote status"}`, http.StatusInternalServerError)
 		return
 	}
 
 	if alreadyVoted {
-		log.Println("Error: User has already voted")
 		http.Error(w, `{"error": "You have already voted in this poll"}`, http.StatusForbidden)
 		return
 	}
 
-	log.Println("User has not voted yet. Proceeding to cast vote.")
-
-	// Update the poll to add the vote
 	voteUpdateQuery := `
 		WITH matched_option AS (
     SELECT idx - 1 AS idx
@@ -181,11 +161,9 @@ WHERE post.id = $3;
 
 	_, err = db.ExecContext(r.Context(), voteUpdateQuery, userID, optionId, postId)
 	if err != nil {
-		log.Printf("Error casting vote: %v", err)
 		http.Error(w, `{"error": "Failed to cast vote"}`, http.StatusInternalServerError)
 		return
 	}
 
-	log.Println("Vote cast successfully")
 	json.NewEncoder(w).Encode(map[string]interface{}{"message": "Vote cast successfully"})
 }
