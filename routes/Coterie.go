@@ -755,9 +755,12 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ff
 func PromoteMember(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value("db").(*sql.DB)
+	if !ok {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 
 	coterieName := r.URL.Query().Get("CoterieName")
 	role := r.URL.Query().Get("role")
@@ -781,15 +784,23 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	var memberID string
 	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, memberName).Scan(&memberID)
 	if err != nil {
-		http.Error(w, "Member not found", http.StatusNotFound)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Member not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
 	var coterieID, ownerID string
-	var rolesJson string
+	var rolesJson sql.NullString
 	err = db.QueryRow(`SELECT id, owner, roles FROM coterie WHERE name = $1`, coterieName).Scan(&coterieID, &ownerID, &rolesJson)
 	if err != nil {
-		http.Error(w, "Coterie not found", http.StatusNotFound)
+		if err == sql.ErrNoRows {
+			http.Error(w, "Coterie not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
@@ -799,7 +810,7 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if role != "Moderator" && role != "Owner" && role != "Admin" {
-		http.Error(w, "Invalid role. Must be 'Moderator' or 'Admin' or 'Owner'", http.StatusBadRequest)
+		http.Error(w, "Invalid role. Must be 'Moderator', 'Admin', or 'Owner'", http.StatusBadRequest)
 		return
 	}
 
@@ -811,12 +822,20 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	var updateQuery string
 	if action == "promote" {
 		updateQuery = `UPDATE coterie
-										 SET roles = jsonb_set(roles, '{` + role + `}', COALESCE(roles->` + role + `, '[]'::jsonb) || $1)
-										 WHERE id = $2`
+							SET roles = jsonb_set(
+								COALESCE(roles, '{}'::jsonb),
+								'{` + role + `}',
+								COALESCE(roles->'` + role + `', '[]'::jsonb) || to_jsonb($1::text)
+							)
+							WHERE id = $2`
 	} else {
 		updateQuery = `UPDATE coterie
-										 SET roles = jsonb_set(roles, '{` + role + `}', roles->` + role + ` - $1)
-										 WHERE id = $2`
+							SET roles = jsonb_set(
+								COALESCE(roles, '{}'::jsonb),
+								'{` + role + `}',
+								roles->'` + role + `' - to_jsonb($1::text)
+							)
+							WHERE id = $2`
 	}
 
 	_, err = db.Exec(updateQuery, memberID, coterieID)
@@ -825,9 +844,15 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{
+	response := map[string]string{
 		"message": fmt.Sprintf("Member %s successfully %sd to %s", memberName, action, role),
-	})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(response)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 }
 
 func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
