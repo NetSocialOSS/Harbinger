@@ -23,7 +23,7 @@ type Post struct {
 }
 
 type Poll struct {
-	ID         string    `bson:"_id" json:"_id"`
+	ID         string    `bson:"id" json:"id"`
 	Options    []Options `bson:"options" json:"options"`
 	CreatedAt  time.Time `bson:"createdAt" json:"createdAt"`
 	TotalVotes int       `bson:"totalVotes" json:"totalVotes"`
@@ -31,8 +31,8 @@ type Poll struct {
 }
 
 type Options struct {
-	ID        string   `bson:"_id" json:"_id"`
-	Votes     []string `bson:"votes" json:"-"`
+	ID        string   `bson:"id" json:"id"`
+	Votes     []string `bson:"votes" json:"votes"`
 	VoteCount int      `json:"voteCount"`
 	Name      string   `bson:"name" json:"name"`
 }
@@ -53,14 +53,14 @@ type NewPost struct {
 }
 
 type NewPoll struct {
-	ID         string       `bson:"_id" json:"_id"`
+	ID         string       `bson:"id" json:"id"`
 	Options    []NewOptions `bson:"options" json:"options"`
 	CreatedAt  time.Time    `bson:"createdAt" json:"createdAt"`
 	Expiration time.Time    `bson:"expiration" json:"expiration"`
 }
 
 type NewOptions struct {
-	ID    string   `bson:"_id" json:"_id"`
+	ID    string   `bson:"id" json:"id"`
 	Votes []string `bson:"votes" json:"-"`
 	Name  string   `bson:"name" json:"name"`
 }
@@ -79,8 +79,8 @@ type Author struct {
 	IsDeveloper    bool      `json:"isDeveloper"`
 	IsPrivate      bool      `bson:"isPrivate" json:"isPrivate"`
 	IsPartner      bool      `json:"isPartner"`
-	ProfilePicture string    `json:"profilePicture,omitempty"`
-	ProfileBanner  string    `json:"profileBanner,omitempty"`
+	ProfilePicture *string   `json:"profilePicture,omitempty"`
+	ProfileBanner  *string   `bson:"profilebanner" json:"profilebanner"`
 	IsOwner        bool      `json:"isOwner"`
 	IsModerator    bool      `json:"isModerator"`
 	IsOrganisation bool      `json:"isOrganisation"`

@@ -29,7 +29,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var image pq.StringArray
 	var coterie sql.NullString
 	var hearts pq.StringArray
-	var comments json.RawMessage
+	var comments sql.NullString
 	var poll sql.NullString
 
 	var post types.Post
@@ -39,6 +39,18 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	err := db.QueryRow(query, postID).Scan(
 		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
 		&poll, &post.CreatedAt, &hearts, &comments)
+
+	// Handle the nullable comments field (JSONB)
+	if comments.Valid {
+		var commentList []types.Comment
+		if err := json.Unmarshal([]byte(comments.String), &commentList); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
+			return
+		}
+		post.Comments = commentList
+	} else {
+		post.Comments = []types.Comment{}
+	}
 
 	// Handle error if the query fails
 	if err != nil {
@@ -78,26 +90,23 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		post.Hearts = []string{}
 	}
 
-	// Handle the nullable comments field (JSONB)
-	if comments != nil {
-		var commentList []types.Comment
-		if err := json.Unmarshal(comments, &commentList); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
-			return
-		}
-		post.Comments = commentList
-	} else {
-		post.Comments = []types.Comment{}
-	}
-
 	// Handle the poll
 	if poll.Valid {
-		if err := json.Unmarshal([]byte(poll.String), &post.Poll); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
-			return
+		var decodedPoll []types.Poll
+		err := json.Unmarshal([]byte(poll.String), &decodedPoll)
+
+		// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
+		if err != nil {
+			var singlePoll types.Poll
+			if err := json.Unmarshal([]byte(poll.String), &singlePoll); err != nil {
+				http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
+				return
+			}
+			// Convert single poll to a slice
+			decodedPoll = append(decodedPoll, singlePoll)
 		}
-	} else {
-		post.Poll = nil
+
+		post.Poll = decodedPoll
 	}
 
 	// Fetch author details
@@ -127,7 +136,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 			commentAuthor.Username = "Unknown"
 			commentAuthor.IsVerified = false
 			commentAuthor.IsOrganisation = false
-			commentAuthor.ProfilePicture = ""
+			commentAuthor.ProfilePicture = nil
 			commentAuthor.IsOwner = false
 			commentAuthor.IsModerator = false
 			commentAuthor.IsDeveloper = false
@@ -146,10 +155,15 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 			AuthorName:     commentAuthor.Username,
 			IsOwner:        commentAuthor.IsOwner,
 			IsModerator:    commentAuthor.IsModerator,
-			ProfilePicture: commentAuthor.ProfilePicture,
-			IsDeveloper:    commentAuthor.IsDeveloper,
-			Replies:        comment.Replies,
-			CreatedAt:      comment.CreatedAt,
+			ProfilePicture: func() string {
+				if commentAuthor.ProfilePicture != nil {
+					return *commentAuthor.ProfilePicture
+				}
+				return ""
+			}(),
+			IsDeveloper: commentAuthor.IsDeveloper,
+			Replies:     comment.Replies,
+			CreatedAt:   comment.CreatedAt,
 		}
 		commentsWithAuthor = append(commentsWithAuthor, commentData)
 	}

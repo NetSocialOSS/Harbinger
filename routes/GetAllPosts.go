@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"time"
 
@@ -80,7 +79,7 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var post types.Post
 		var commentsJSON []byte
-		var pollJSON json.RawMessage
+		var pollJSON sql.NullString
 		var scheduledFor sql.NullTime
 
 		err := rows.Scan(
@@ -89,7 +88,6 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			&commentsJSON, &post.Indexing,
 		)
 		if err != nil {
-			log.Printf("Error scanning row: %v", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -101,12 +99,26 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
-			log.Printf("Error unmarshalling comments JSON: %v", err)
 			post.Comments = nil
 		}
-		if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
-			log.Printf("Error unmarshalling poll JSON: %v", err)
-			post.Poll = nil
+
+		// Handle the poll
+		if pollJSON.Valid {
+			var decodedPoll []types.Poll
+			err := json.Unmarshal([]byte(pollJSON.String), &decodedPoll)
+
+			// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
+			if err != nil {
+				var singlePoll types.Poll
+				if err := json.Unmarshal([]byte(pollJSON.String), &singlePoll); err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
+					return
+				}
+				// Convert single poll to a slice
+				decodedPoll = append(decodedPoll, singlePoll)
+			}
+
+			post.Poll = decodedPoll
 		}
 
 		posts = append(posts, post)
@@ -131,7 +143,6 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 				&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
 			)
 			if err != nil {
-				log.Printf("Error fetching author data for user %s", err)
 				continue
 			}
 			userCache.Set(post.Author, author, time.Minute*3)
@@ -163,7 +174,6 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		for _, heart := range post.Hearts {
 			userID, err := uuid.Parse(heart)
 			if err != nil {
-				log.Printf("Error parsing heart UUID %s: %v", heart, err)
 				continue
 			}
 
@@ -175,7 +185,6 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 					&heartAuthor.IsDeveloper, &heartAuthor.IsOwner, &heartAuthor.IsModerator, &heartAuthor.IsPartner,
 				)
 				if err != nil {
-					log.Printf("Error fetching heart author data for user %s", err)
 					continue
 				}
 				heartsDetails = append(heartsDetails, heartAuthor.Username)
