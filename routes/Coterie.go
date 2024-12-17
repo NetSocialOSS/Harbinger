@@ -250,7 +250,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		var scheduledFor pq.NullTime
 		var pollJSON *json.RawMessage
-		var commentsJSON []byte
+		var commentsJSON sql.NullString
 
 		for rows.Next() {
 			var post types.Post
@@ -260,14 +260,14 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Attempt to unmarshal the comments JSONB, check if commentsJSON is not nil or empty
-			if len(commentsJSON) > 0 {
-				if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
-					http.Error(w, "Error decoding comments data: "+err.Error(), http.StatusInternalServerError)
+			if commentsJSON.Valid {
+				var commentList []types.Comment
+				if err := json.Unmarshal([]byte(commentsJSON.String), &commentList); err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
 					return
 				}
+				post.Comments = commentList
 			} else {
-				// If commentsJSON is empty or nil, initialize it as an empty slice
 				post.Comments = []types.Comment{}
 			}
 
