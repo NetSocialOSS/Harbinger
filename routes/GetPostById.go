@@ -40,26 +40,24 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
 		&poll, &post.CreatedAt, &hearts, &comments)
 
-	if comments.Valid {
+	if comments.Valid && comments.String != "" {
 		var commentList []types.Comment
 
-		var rawMessage json.RawMessage
-		if err := json.Unmarshal([]byte(comments.String), &rawMessage); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to parse comments JSON: %v", err), http.StatusInternalServerError)
-			return
-		}
-
-		if err := json.Unmarshal(rawMessage, &commentList); err != nil {
+		// Try to unmarshal the comments field into a slice of Comment
+		if err := json.Unmarshal([]byte(comments.String), &commentList); err != nil {
+			// If unmarshalling into a slice fails, try unmarshalling into a single Comment object
 			var singleComment types.Comment
-			if err := json.Unmarshal(rawMessage, &singleComment); err != nil {
-				http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
-				return
+			if err := json.Unmarshal([]byte(comments.String), &singleComment); err != nil {
+				// Log the issue and default to an empty list without crashing
+				post.Comments = []types.Comment{}
+			} else {
+				commentList = append(commentList, singleComment)
 			}
-			commentList = append(commentList, singleComment)
 		}
 
 		post.Comments = commentList
 	} else {
+		// Default to an empty comments list if the data is NULL or empty
 		post.Comments = []types.Comment{}
 	}
 
