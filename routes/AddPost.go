@@ -211,10 +211,10 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 
 	// Insert new post into the database
 	query := `
-    INSERT INTO post (id, title, content, author, "isIndexed", createdAt, coterie, scheduledfor, image, poll, hearts, comments)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+    INSERT INTO post (id, title, content, author, "isIndexed", createdAt, coterie, scheduledfor, image, poll, hearts)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 `
-	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}), pq.Array([]string{}))
+	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}))
 	if err != nil {
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
 		return
