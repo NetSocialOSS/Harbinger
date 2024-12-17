@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"netsocial/middlewares"
@@ -126,8 +125,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Request timed out", http.StatusGatewayTimeout)
 			return
 		}
-
-		log.Printf("Error fetching user data: %v", err)
 
 		http.Error(w, "Error fetching user data", http.StatusInternalServerError)
 		return
@@ -325,8 +322,8 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var post types.Post
-		var commentsJSON []byte
-		var pollJSON json.RawMessage
+		var commentsJSON sql.NullString
+		var pollJSON sql.NullString
 		var scheduledFor pq.NullTime
 		err := rows.Scan(
 			&post.ID, &post.Title, &post.Content, &post.Author, &post.Coterie, &scheduledFor,
@@ -337,9 +334,23 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error decoding post data"+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
-			http.Error(w, "Error decoding poll data: "+err.Error(), http.StatusInternalServerError)
-			return
+		// Handle the poll
+		if pollJSON.Valid {
+			var decodedPoll []types.Poll
+			err := json.Unmarshal([]byte(pollJSON.String), &decodedPoll)
+
+			// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
+			if err != nil {
+				var singlePoll types.Poll
+				if err := json.Unmarshal([]byte(pollJSON.String), &singlePoll); err != nil {
+					http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
+					return
+				}
+				// Convert single poll to a slice
+				decodedPoll = append(decodedPoll, singlePoll)
+			}
+
+			post.Poll = decodedPoll
 		}
 		if scheduledFor.Valid {
 			post.ScheduledFor = scheduledFor.Time
@@ -347,9 +358,15 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			post.ScheduledFor = time.Time{}
 		}
 
-		if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
-			http.Error(w, "Error decoding comments data: "+err.Error(), http.StatusInternalServerError)
-			return
+		if commentsJSON.Valid {
+			var commentList []types.Comment
+			if err := json.Unmarshal([]byte(commentsJSON.String), &commentList); err != nil {
+				http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
+				return
+			}
+			post.Comments = commentList
+		} else {
+			post.Comments = []types.Comment{}
 		}
 
 		var author types.Author

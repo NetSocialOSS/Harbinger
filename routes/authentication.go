@@ -666,9 +666,9 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	// Update the user's password in the database
 	_, err = db.Exec(`
 		UPDATE users 
-		SET password = $1, password_reset_at = $2 
-		WHERE id = $3
-	`, string(hashedPassword), time.Now(), user.ID)
+		SET password = $1
+		WHERE id = $2
+	`, string(hashedPassword), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return

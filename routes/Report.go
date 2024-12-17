@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"log"
 	"net/http"
 	"netsocial/middlewares"
 	"os"
@@ -43,7 +42,6 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
-		log.Println("Error fetching reporter username:", err)
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
 		return
 	}
@@ -83,7 +81,6 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
-		log.Println("Error sending message to Discord webhook:", err)
 		http.Error(w, "Failed to report user", http.StatusInternalServerError)
 		return
 	}
@@ -106,7 +103,6 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
-		log.Println("Error fetching reporter username:", err)
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
 		return
 	}
@@ -124,7 +120,6 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Invalid reported post ID"}`, http.StatusBadRequest)
 			return
 		}
-		log.Println("Error checking post existence:", err)
 		http.Error(w, "Failed to check post existence", http.StatusInternalServerError)
 		return
 	}
@@ -159,7 +154,6 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
-		log.Println("Error sending message to Discord webhook:", err)
 		http.Error(w, "Failed to report post", http.StatusInternalServerError)
 		return
 	}
@@ -182,7 +176,6 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 	db := r.Context().Value("db").(*sql.DB)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
-		log.Println("Error fetching reporter username:", err)
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
 		return
 	}
@@ -200,7 +193,6 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"error": "Invalid reported coterie name"}`, http.StatusBadRequest)
 			return
 		}
-		log.Println("Error checking coterie existence:", err)
 		http.Error(w, "Failed to check coterie existence", http.StatusInternalServerError)
 		return
 	}
@@ -235,7 +227,6 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 
 	err = discordwebhook.SendMessage(webhookURL, message)
 	if err != nil {
-		log.Println("Error sending message to Discord webhook:", err)
 		http.Error(w, "Failed to report coterie", http.StatusInternalServerError)
 		return
 	}

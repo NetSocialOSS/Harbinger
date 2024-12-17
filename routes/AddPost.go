@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"netsocial/middlewares"
+	"netsocial/types"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -45,6 +47,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get input parameters
 	title := r.URL.Query().Get("title")
 	content := r.URL.Query().Get("content")
 	encryptedUserID := r.Header.Get("X-userID")
@@ -56,6 +59,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	indexingStr := r.Header.Get("X-indexing")
 	indexing := false
 
+	// Parsing 'indexing' value
 	if indexingStr != "" {
 		if indexingStr == "true" {
 			indexing = true
@@ -67,44 +71,47 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Decrypt user ID
 	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
 		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
 		return
 	}
 
-	// Split options by comma only if optionsStr is provided
-	var validOptions []string
+	// Validate options for polls
+	var validOptions []types.NewOptions
 	if optionsStr != "" {
 		options := strings.Split(optionsStr, ",")
-		// Trim whitespace from each option
 		for _, option := range options {
 			trimmedOption := strings.TrimSpace(option)
 			if trimmedOption != "" {
-				validOptions = append(validOptions, trimmedOption)
+				validOptions = append(validOptions, types.NewOptions{
+					ID:   uuid.New().String(),
+					Name: trimmedOption,
+				})
 			}
 		}
 
-		// Validate that we have at least 2 and no more than 4 options if provided
 		if len(validOptions) < 2 || len(validOptions) > 4 {
 			http.Error(w, "Please provide between 2 and 4 poll options", http.StatusBadRequest)
 			return
 		}
 	}
 
+	// Check required fields
 	if title == "" || content == "" || userID == "" {
 		http.Error(w, "Title, content, and user ID are required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate the user ID as a UUID
+	// Validate user ID
 	_, err = uuid.Parse(userID)
 	if err != nil {
 		http.Error(w, "Invalid user ID.", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the user exists and is not banned
+	// Check if the user is banned
 	var isBanned bool
 	err = db.QueryRow("SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
 	if err != nil {
@@ -117,10 +124,10 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate coterie membership
+	// Check if the user is a member of the coterie (if provided)
 	if coterieName != "" {
 		var members []string
-		err = db.QueryRow("SELECT members FROM coterie WHERE name = $1", coterieName).Scan(&members)
+		err = db.QueryRow("SELECT members FROM coterie WHERE name = $1", coterieName).Scan(pq.Array(&members))
 		if err != nil {
 			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
 			return
@@ -140,84 +147,80 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate a unique post ID
+	// Generate unique post ID
 	postID, err := generateUniqueID(db)
 	if err != nil {
 		http.Error(w, "Failed to generate unique post ID", http.StatusInternalServerError)
 		return
 	}
 
-	// Parse ScheduledFor time
-	var scheduledFor time.Time
+	// Parse scheduled time
+	var scheduledFor *time.Time
 	if scheduledForStr != "" {
-		scheduledFor, err = time.Parse(time.RFC3339, scheduledForStr)
+		parsedTime, err := time.Parse(time.RFC3339, scheduledForStr)
 		if err != nil {
 			http.Error(w, "Invalid format for scheduled time", http.StatusBadRequest)
 			return
 		}
+		scheduledFor = &parsedTime
 	}
 
-	// Process poll options only if valid options exist
-	var pollJSON []byte
-	if optionsStr != "" {
-		options := strings.Split(optionsStr, ",")
-		validOptions := []map[string]interface{}{}
+	// Handle poll creation
+	var pollJSON *string
+	if len(validOptions) > 0 {
+		poll := types.NewPoll{
+			ID:        uuid.New().String(),
+			Options:   validOptions,
+			CreatedAt: time.Now(),
+		}
 
-		for _, option := range options {
-			trimmedOption := strings.TrimSpace(option)
-			if trimmedOption != "" {
-				validOptions = append(validOptions, map[string]interface{}{
-					"id":    uuid.New().String(),
-					"name":  trimmedOption,
-					"votes": []string{},
-				})
+		// Decode expiration time if provided
+		if expirationStr != "" {
+			decodedExpirationStr, err := url.QueryUnescape(expirationStr)
+			if err != nil {
+				http.Error(w, "Failed to decode expiration time", http.StatusBadRequest)
+				return
 			}
+
+			// Parse the expiration time
+			expirationTime, err := time.Parse(time.RFC3339, decodedExpirationStr)
+			if err != nil {
+				http.Error(w, "Invalid expiration time", http.StatusBadRequest)
+				return
+			}
+
+			poll.Expiration = expirationTime
 		}
 
-		if len(validOptions) < 2 || len(validOptions) > 4 {
-			http.Error(w, "Please provide between 2 and 4 poll options", http.StatusBadRequest)
-			return
-		}
-
-		poll := map[string]interface{}{
-			"id":        uuid.New().String(),
-			"options":   validOptions,
-			"createdAt": time.Now(),
-			"expiration": func() time.Time {
-				if expirationStr != "" {
-					expirationTime, err := time.Parse(time.RFC3339, expirationStr)
-					if err == nil {
-						return expirationTime
-					}
-				}
-				return time.Time{}
-			}(),
-		}
-
-		pollJSON, err = json.Marshal(poll)
+		// Marshal poll to JSON
+		pollBytes, err := json.Marshal(poll)
 		if err != nil {
 			http.Error(w, "Failed to process poll options", http.StatusInternalServerError)
 			return
 		}
+
+		pollJSONStr := string(pollBytes)
+		pollJSON = &pollJSONStr
 	}
 
-	// Add the Image field only if image URLs are provided
+	// Process images
 	var images []string
 	if image != "" {
 		images = strings.Split(image, ",")
 	}
 
-	// Insert the post into PostgreSQL
+	// Insert new post into the database
 	query := `
-		INSERT INTO post (id, title, content, author, isIndexed, createdAt, coterie, scheduledFor, image, poll)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`
-	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), string(pollJSON))
+    INSERT INTO post (id, title, content, author, "isIndexed", createdAt, coterie, scheduledfor, image, poll, hearts, comments)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+`
+	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}), pq.Array([]string{}))
 	if err != nil {
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
 		return
 	}
 
+	// Respond with success
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintf(w, `{"message": "Post successfully created!", "postId": "%s"}`, postID)
 }
