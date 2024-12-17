@@ -40,13 +40,24 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
 		&poll, &post.CreatedAt, &hearts, &comments)
 
-	// Handle the nullable comments field (JSONB)
 	if comments.Valid {
 		var commentList []types.Comment
-		if err := json.Unmarshal([]byte(comments.String), &commentList); err != nil {
-			http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
+
+		var rawMessage json.RawMessage
+		if err := json.Unmarshal([]byte(comments.String), &rawMessage); err != nil {
+			http.Error(w, fmt.Sprintf("Failed to parse comments JSON: %v", err), http.StatusInternalServerError)
 			return
 		}
+
+		if err := json.Unmarshal(rawMessage, &commentList); err != nil {
+			var singleComment types.Comment
+			if err := json.Unmarshal(rawMessage, &singleComment); err != nil {
+				http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
+				return
+			}
+			commentList = append(commentList, singleComment)
+		}
+
 		post.Comments = commentList
 	} else {
 		post.Comments = []types.Comment{}
