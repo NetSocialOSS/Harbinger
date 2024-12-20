@@ -11,6 +11,16 @@ import (
 	"github.com/gtuk/discordwebhook"
 )
 
+const (
+	colorRed = "16711680"
+	title    = "🚨 Error Report 🚨"
+)
+
+var (
+	webhookURL    = os.Getenv("DISCORD_BUG_REPORT_WEBHOOK_URL")
+	sensitiveKeys = []string{"reporterID", "UserID", "session_id", "userId", "user_id", "modid"}
+)
+
 // DiscordErrorReport is a middleware that sends error reports to a Discord webhook
 func DiscordErrorReport(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,35 +52,33 @@ func (rec *statusRecorder) WriteHeader(code int) {
 
 // sendErrorReportToDiscord sends a detailed error report to the configured Discord webhook
 func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
-	webhookURL := os.Getenv("DISCORD_BUG_REPORT_WEBHOOK_URL")
 	if webhookURL == "" {
 		return fmt.Errorf("webhook URL not set in environment variables")
 	}
-	color := "16711680"
-	title := "🚨 Error Report 🚨"
+
 	description := fmt.Sprintf("A request resulted in an error with status code %d.", statusCode)
 	statusText := http.StatusText(statusCode)
 	redactedURL := redactSensitiveParameters(r.URL)
 	currentTime := time.Now().Format(time.RFC3339)
 
 	embed := discordwebhook.Embed{
-		Title:       &title,
-		Description: &description,
+		Title:       ptr(title),
+		Description: ptr(description),
 		Fields: &[]discordwebhook.Field{
 			{
 				Name:  ptr("Status Code"),
-				Value: &statusText,
+				Value: ptr(statusText),
 			},
 			{
 				Name:  ptr("Request URL"),
-				Value: &redactedURL,
+				Value: ptr(redactedURL),
 			},
 			{
 				Name:  ptr("Time"),
-				Value: &currentTime,
+				Value: ptr(currentTime),
 			},
 		},
-		Color: &color,
+		Color: ptr(colorRed),
 	}
 
 	message := discordwebhook.Message{
@@ -88,7 +96,6 @@ func sendErrorReportToDiscord(statusCode int, r *http.Request) error {
 // redactSensitiveParameters redacts sensitive query parameters from the URL
 func redactSensitiveParameters(u *url.URL) string {
 	query := u.Query()
-	sensitiveKeys := []string{"reporterID", "UserID", "session_id", "userId", "user_id", "modid"}
 
 	for _, key := range sensitiveKeys {
 		if query.Has(key) {
