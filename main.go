@@ -19,6 +19,10 @@ import (
 	"github.com/joho/godotenv"
 )
 
+type contextKey string
+
+const dbContextKey contextKey = "db"
+
 func main() {
 	// Load environment variables
 	loadEnv()
@@ -107,7 +111,7 @@ func setupRouter(dbURL string) *chi.Mux {
 	}()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r = r.WithContext(context.WithValue(r.Context(), "db", db))
+			r = r.WithContext(context.WithValue(r.Context(), dbContextKey, db))
 			next.ServeHTTP(w, r)
 		})
 	})
