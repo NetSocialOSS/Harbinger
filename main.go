@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"time"
 
 	"netsocial/configuration"
 	"netsocial/database"
@@ -18,19 +20,63 @@ import (
 )
 
 func main() {
-	// Attempt to load environment variables from .env file
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("Warning: .env file not found or could not be loaded.")
-	}
+	// Load environment variables
+	loadEnv()
 
-	// Fetch environment variables, fallback to environment directly if needed
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("DATABASE_URL environment variable not set")
-	}
+	// Fetch environment variables
+	dbURL := getEnv("DATABASE_URL")
+	port := getEnv("PORT")
 
 	// Create a new Chi router
+	r := setupRouter(dbURL)
+
+	// Create a server
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+
+	// Graceful shutdown
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("ListenAndServe(): %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt)
+	<-quit
+
+	log.Println("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	log.Println("Server exiting")
+}
+
+// Load environment variables from .env file
+func loadEnv() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("Warning: .env file not found or could not be loaded.")
+	}
+}
+
+// Get environment variable or log fatal error if not set
+func getEnv(key string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		log.Fatalf("%s environment variable not set", key)
+	}
+	return value
+}
+
+// Setup router with middleware and routes
+func setupRouter(dbURL string) *chi.Mux {
 	r := chi.NewRouter()
 
 	// CORS Middleware using go-chi/cors
@@ -72,7 +118,6 @@ func main() {
 		respondJSON(w, http.StatusOK, map[string]interface{}{
 			"message": "Hello, World from Net Social!",
 			"version": configuration.GetConfig().ApiVersion,
-			"author":  "Ranveer Soni",
 			"links": map[string]string{
 				"status": "https://netsocial.instatus.com",
 				"docs":   "https://docs.netsocial.app",
@@ -108,9 +153,7 @@ func main() {
 	routes.Partner(r)
 	r.NotFound(NotFoundHandler)
 
-	// Listen and serve
-	port := os.Getenv("PORT")
-	log.Fatal(http.ListenAndServe(":"+port, r))
+	return r
 }
 
 // Helper function to respond with JSON
