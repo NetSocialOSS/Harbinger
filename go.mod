@@ -1,6 +1,7 @@
 module netsocial
 
 go 1.21
+toolchain go1.24.1
 
 require (
 	github.com/go-chi/chi/v5 v5.1.0
@@ -39,6 +40,6 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // direct
 	github.com/lib/pq v1.10.9
-	golang.org/x/crypto v0.31.0
-	golang.org/x/text v0.21.0 // indirect
+	golang.org/x/crypto v0.35.0
+	golang.org/x/text v0.22.0 // indirect
 )
