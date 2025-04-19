@@ -1,21 +1,23 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	// Get database connection
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -24,26 +26,24 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	username := r.Header.Get("X-username")
 	action := r.Header.Get("X-action")
 	badge := r.Header.Get("X-badge")
-	encryptedid := r.Header.Get("X-modid")
 	entity := r.Header.Get("X-entity")
 
 	// Decrypt modID
-	modID, err := middlewares.DecryptAES(encryptedid)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Validate modID
-	_, err = uuid.Parse(modID)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
-		return
-	}
-
 	// Check if the mod is an owner or moderator
 	var modUser types.User
-	err = db.QueryRow("SELECT id, isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&modUser.ID, &modUser.IsOwner, &modUser.IsModerator, &modUser.IsDeveloper)
+	err = db.QueryRow(context.Background(), "SELECT id, isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&modUser.ID, &modUser.IsOwner, &modUser.IsModerator, &modUser.IsDeveloper)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -57,7 +57,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	switch entity {
 	case "user":
 		var user types.User
-		err := db.QueryRow("SELECT id FROM users WHERE username = $1", username).Scan(&user.ID)
+		err := db.QueryRow(context.Background(), "SELECT id FROM users WHERE username = $1", username).Scan(&user.ID)
 		if err != nil {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 			return
@@ -70,7 +70,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		}
 
 		query := "UPDATE users SET " + update + " WHERE username = $1"
-		_, err = db.Exec(query, username)
+		_, err = db.Exec(context.Background(), query, username)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
 			return
@@ -84,7 +84,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	case "coterie":
 		coterieName := r.Header.Get("X-username")
 		var coterie types.Coterie
-		err := db.QueryRow("SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.ID)
+		err := db.QueryRow(context.Background(), "SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.ID)
 		if err != nil {
 			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 			return
@@ -97,7 +97,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 		}
 
 		query := "UPDATE coterie SET " + update + " WHERE name = $1"
-		_, err = db.Exec(query, coterieName)
+		_, err = db.Exec(context.Background(), query, coterieName)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update coterie badges"}`, http.StatusInternalServerError)
 			return
@@ -168,31 +168,29 @@ func handleBadgeUpdateForCoterie(badge string, action string) string {
 }
 
 func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
 	postID := r.Header.Get("X-postId")
-	encryptedid := r.Header.Get("X-modid")
+	// Decrypt modID
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	modID, err := middlewares.DecryptAES(encryptedid)
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Validate modID
-	_, err = uuid.Parse(modID)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
-		return
-	}
-
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -205,12 +203,12 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the post from the database
-	result, err := db.Exec("DELETE FROM post WHERE id = $1", postID)
+	result, err := db.Exec(context.Background(), "DELETE FROM post WHERE id = $1", postID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
 		return
 	}
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		http.Error(w, `{"error": "Post not found"}`, http.StatusNotFound)
 		return
@@ -223,16 +221,21 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
 	coterieName := r.Header.Get("X-name")
-	encryptedid := r.Header.Get("X-modid")
+	// Decrypt modID
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	modID, err := middlewares.DecryptAES(encryptedid)
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
@@ -247,7 +250,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -260,12 +263,12 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the coterie from the database
-	result, err := db.Exec("DELETE FROM coterie WHERE name = $1", coterieName)
+	result, err := db.Exec(context.Background(), "DELETE FROM coterie WHERE name = $1", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete coterie"}`, http.StatusInternalServerError)
 		return
 	}
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 		return
@@ -278,7 +281,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 func ManageUser(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
@@ -286,24 +289,22 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 
 	username := r.Header.Get("X-username")
 	action := r.Header.Get("X-action")
-	encryptedid := r.Header.Get("X-modid")
+	// Decrypt modID
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	modID, err := middlewares.DecryptAES(encryptedid)
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Validate modID
-	_, err = uuid.Parse(modID)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid modID"}`, http.StatusBadRequest)
-		return
-	}
-
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow("SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -327,12 +328,12 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec(query, username)
+	result, err := db.Exec(context.Background(), query, username)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to update user status"}`, http.StatusInternalServerError)
 		return
 	}
-	rowsAffected, _ := result.RowsAffected()
+	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 		return
@@ -345,8 +346,8 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func Admin(r chi.Router) {
-	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/badge", (middlewares.DiscordErrorReport(http.HandlerFunc(ManageBadge)).ServeHTTP))
-	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/user", (middlewares.DiscordErrorReport(http.HandlerFunc(ManageUser)).ServeHTTP))
-	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/post", (middlewares.DiscordErrorReport(http.HandlerFunc(DeletePostAdmin)).ServeHTTP))
-	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/coterie", (middlewares.DiscordErrorReport(http.HandlerFunc(DeleteCoterieAdmin)).ServeHTTP))
+	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/badge", ManageBadge)
+	r.With(RateLimit(5, 10*time.Minute)).Post("/admin/manage/user", ManageUser)
+	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/post", DeletePostAdmin)
+	r.With(RateLimit(5, 10*time.Minute)).Delete("/admin/manage/coterie", DeleteCoterieAdmin)
 }

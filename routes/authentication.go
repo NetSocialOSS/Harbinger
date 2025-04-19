@@ -3,27 +3,31 @@ package routes
 import (
 	"bufio"
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
-	"os"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt"
 	"github.com/google/uuid"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/resend/resend-go/v2"
 	"golang.org/x/crypto/bcrypt"
 )
 
-var jwtSecret = os.Getenv("jwtSecret")
+var configuration types.Config
+
+var jwtSecret = configuration.JwtSecret
+var apiKey = configuration.ResendKey
 
 func generateJWT(userID uuid.UUID) (string, error) {
 	claims := jwt.MapClaims{
@@ -34,28 +38,34 @@ func generateJWT(userID uuid.UUID) (string, error) {
 	return token.SignedString([]byte(jwtSecret))
 }
 
-func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
+func authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokenCookie, err := r.Cookie("token")
-		if err != nil || tokenCookie == nil {
+		if err != nil || tokenCookie.Value == "" {
 			http.Error(w, "Token missing", http.StatusUnauthorized)
 			return
 		}
 
 		token, err := jwt.Parse(tokenCookie.Value, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok || token.Method != jwt.SigningMethodHS256 {
 				return nil, errors.New("invalid signing method")
 			}
 			return []byte(jwtSecret), nil
 		})
-		if err != nil {
+		if err != nil || !token.Valid {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok || !token.Valid {
+		if !ok {
 			http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+			return
+		}
+
+		exp, ok := claims["exp"].(float64)
+		if !ok || time.Now().Unix() > int64(exp) {
+			http.Error(w, "Token expired", http.StatusUnauthorized)
 			return
 		}
 
@@ -65,10 +75,10 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		db := r.Context().Value("db").(*sql.DB)
+		conn := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 		var exists bool
 		query := "SELECT EXISTS(SELECT 1 FROM sessions WHERE userid = $1 AND token = $2)"
-		err = db.QueryRow(query, userID.String(), tokenCookie.Value).Scan(&exists)
+		err = conn.QueryRow(r.Context(), query, userID.String(), tokenCookie.Value).Scan(&exists)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
 			return
@@ -80,8 +90,9 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		ctx := context.WithValue(r.Context(), "user_id", userID)
+
 		next.ServeHTTP(w, r.WithContext(ctx))
-	}
+	})
 }
 
 func FetchDisposableDomains() (map[string]bool, error) {
@@ -105,7 +116,6 @@ func FetchDisposableDomains() (map[string]bool, error) {
 }
 
 func sendWelcomeEmail(email string) error {
-	apiKey := os.Getenv("RESEND_API_KEY")
 
 	client := resend.NewClient(apiKey)
 	params := &resend.SendEmailRequest{
@@ -119,7 +129,7 @@ func sendWelcomeEmail(email string) error {
 }
 
 func UserSignup(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	pool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var signupData struct {
 		Username          string `json:"username"`
@@ -156,8 +166,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	// Check for existing user
 	var exists bool
-	err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)",
-		signupData.Username, email).Scan(&exists)
+	err = pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)", signupData.Username, email).Scan(&exists)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
@@ -169,30 +178,29 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	// Get the last user ID
 	var lastUserID int
-	err = db.QueryRow("SELECT COALESCE(MAX(userid), 0) FROM users").Scan(&lastUserID)
+	err = pool.QueryRow(r.Context(), "SELECT COALESCE(MAX(userid::int), 0) FROM users;").Scan(&lastUserID)
 	if err != nil {
 		http.Error(w, "Failed to get last user ID", http.StatusInternalServerError)
 		return
 	}
 
 	// Begin transaction
-	tx, err := db.BeginTx(context.Background(), nil)
+	tx, err := pool.BeginTx(r.Context(), pgx.TxOptions{})
 	if err != nil {
 		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
 		return
 	}
-	defer tx.Rollback()
+	defer tx.Rollback(r.Context())
 
 	// Insert new user
-	userID := uuid.New().String()
-	_, err = tx.Exec(`
+	_, err = tx.Exec(r.Context(), `
 		INSERT INTO users (
-			id, userid, username, displayname, email, password, 
-			profilepicture, createdat, links, isbanned
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-		userID, lastUserID+1, signupData.Username, signupData.Username, email,
+			 userid, username, displayname, email, password, 
+			profilepicture, createdat
+		) VALUES ($1::INT, $2, $3, $4, $5, $6, $7)`,
+		lastUserID+1, signupData.Username, signupData.Username, email,
 		hashedPassword, "https://cdn.netsocial.app/logos/netsocial.png",
-		time.Now(), pq.Array([]string{}), false,
+		time.Now(),
 	)
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
@@ -207,7 +215,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Commit transaction
-	if err = tx.Commit(); err != nil {
+	if err = tx.Commit(r.Context()); err != nil {
 		http.Error(w, "Failed to commit transaction", http.StatusInternalServerError)
 		return
 	}
@@ -217,7 +225,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func UserLogin(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var loginData struct {
 		Identifier string `json:"identifier"`
@@ -243,8 +251,8 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 	var user types.User
 
 	query := `SELECT id, username, email, password FROM users WHERE username = $1 OR email = $1`
-	err = db.QueryRow(query, decryptedIdentifier).Scan(&user.ID, &user.Username, &user.Email, &user.Password)
-	if err == sql.ErrNoRows {
+	err = db.QueryRow(r.Context(), query, decryptedIdentifier).Scan(&user.ID, &user.Username, &user.Email, &user.Password)
+	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	} else if err != nil {
@@ -263,7 +271,6 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid user ID format", http.StatusInternalServerError)
 		return
 	}
-
 	token, err := generateJWT(userUUID)
 	if err != nil {
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
@@ -278,8 +285,8 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 	})
 
-	sessionID := uuid.New().String()
 	device := r.UserAgent()
+	sessionID := uuid.New()
 
 	claims, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -294,8 +301,8 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	expirationTime := time.Unix(int64(claims.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
 
-	insertSessionQuery := `INSERT INTO sessions (sessionid, userid, device, startedat, expiresat, token) VALUES ($1, $2, $3, $4, $5, $6)`
-	_, err = db.Exec(insertSessionQuery, sessionID, user.ID, device, time.Now(), expirationTime, token)
+	insertSessionQuery := `INSERT INTO sessions (sessionid, userid, device, expiresat, token, type) VALUES ($1, $2, $3, $4, $5, $6)`
+	_, err = db.Exec(r.Context(), insertSessionQuery, sessionID, user.ID, device, expirationTime, token, "harbinger-generated")
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
@@ -303,7 +310,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	http.SetCookie(w, &http.Cookie{
 		Name:     "session_id",
-		Value:    sessionID,
+		Value:    sessionID.String(),
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteNoneMode,
@@ -313,7 +320,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func UserLogout(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var logoutData struct {
 		SessionID string `json:"sessionId"`
@@ -330,19 +337,20 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec("DELETE FROM sessions WHERE sessionid = $1 AND userid = $2",
-		logoutData.SessionID, userID)
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+
+	result, err := db.Exec(r.Context(), "DELETE FROM sessions WHERE sessionid = $1 AND userid = $2",
+		logoutData.SessionID, userUUID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, "Failed to get rows affected", http.StatusInternalServerError)
-		return
-	}
-
+	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
@@ -370,10 +378,9 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func ChangePassword(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var passwordData struct {
-		UserID      string `json:"userId"`
 		OldPassword string `json:"oldPassword"`
 		NewPassword string `json:"newPassword"`
 	}
@@ -383,15 +390,15 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userId, err := middlewares.DecryptAES(passwordData.UserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		http.Error(w, "Invalid or missing user ID", http.StatusInternalServerError)
 		return
 	}
 
 	var user types.User
-	err = db.QueryRow("SELECT id, password FROM users WHERE id = $1", userId).Scan(&user.ID, &user.Password)
-	if err == sql.ErrNoRows {
+	err := db.QueryRow(r.Context(), "SELECT id, password FROM users WHERE id = $1", userID).Scan(&user.ID, &user.Password)
+	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
@@ -429,72 +436,72 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec("UPDATE users SET password = $1 WHERE id = $2", string(hashedNewPassword), user.ID)
+	_, err = db.Exec(r.Context(), "UPDATE users SET password = $1 WHERE id = $2", string(hashedNewPassword), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
+	}
+
+	_, err = db.Exec(r.Context(), "DELETE FROM sessions WHERE userid = $1", user.ID)
+	if err != nil {
+		log.Printf("Failed to clear sessions: %v", err)
 	}
 
 	json.NewEncoder(w).Encode(map[string]string{"message": "Password changed successfully"})
 }
 
 func CurrentUser(w http.ResponseWriter, r *http.Request) {
-	// Retrieve the database connection from the request context
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok || db == nil {
 		http.Error(w, "Database connection not found", http.StatusInternalServerError)
 		return
 	}
 
-	// Retrieve the user ID from the request context
 	userID, ok := r.Context().Value("user_id").(uuid.UUID)
 	if !ok {
 		http.Error(w, "Invalid or missing user ID", http.StatusInternalServerError)
 		return
 	}
 
-	// Query user information
 	var user types.User
-	err := db.QueryRow(`
+	err := db.QueryRow(r.Context(), `
 		SELECT id, username, displayname, bio, profilepicture, isorganisation,
-		       "isPrivateHearts", "isPrivate", links
+		       isprivatehearts, isprivate, links
 		FROM users WHERE id = $1
-	`, userID.String()).Scan(
+	`, userID).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.Bio,
 		&user.ProfilePicture, &user.IsOrganisation,
-		&user.IsPrivateHearts, &user.IsPrivate, pq.Array(&user.Links),
+		&user.IsPrivateHearts, &user.IsPrivate, &user.Links,
 	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, "User not found", http.StatusNotFound)
-			return
-		}
+	if errors.Is(err, pgx.ErrNoRows) {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	} else if err != nil {
+		log.Println(err)
+
 		http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
 		return
 	}
 
-	// Query user sessions
-	rows, err := db.Query(`
-		SELECT sessionid, device, startedat, expiresat
+	rows, err := db.Query(r.Context(), `
+		SELECT sessionid, device, startedat, expiresat, type
 		FROM sessions WHERE userid = $1
-	`, userID.String())
+	`, userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user sessions", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	// Get the current session ID from the session cookie (if present)
 	currentSessionID := ""
 	if currentSessionCookie, err := r.Cookie("session_id"); err == nil {
 		currentSessionID = currentSessionCookie.Value
 	}
 
-	// Process session rows
 	var sessions []map[string]interface{}
 	for rows.Next() {
 		var session types.Session
-		if err := rows.Scan(&session.SessionID, &session.Device, &session.StartedAt, &session.ExpiresAt); err != nil {
+		if err := rows.Scan(&session.SessionID, &session.Device, &session.StartedAt, &session.ExpiresAt, &session.Type); err != nil {
 			http.Error(w, "Failed to parse session data", http.StatusInternalServerError)
 			return
 		}
@@ -504,7 +511,7 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 			"device":     session.Device,
 			"started_at": session.StartedAt,
 			"expires_at": session.ExpiresAt,
-			"current":    session.SessionID == currentSessionID,
+			"current":    session.SessionID.String() == currentSessionID,
 		})
 	}
 	if err = rows.Err(); err != nil {
@@ -512,7 +519,6 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare the response
 	response := map[string]interface{}{
 		"_id":             user.ID,
 		"username":        user.Username,
@@ -526,7 +532,6 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 		"sessions":        sessions,
 	}
 
-	// Encode and write the JSON response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
@@ -534,69 +539,48 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func LogOutSession(w http.ResponseWriter, r *http.Request) {
-	// Define the structure to parse incoming JSON
 	var logoutData struct {
 		SessionID string `json:"sessionId"`
-		UserID    string `json:"userId"`
 	}
 
-	// Decode the request body
 	if err := json.NewDecoder(r.Body).Decode(&logoutData); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Parse UserID
-	decrypteduserID, err := middlewares.DecryptAES(logoutData.UserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt userId", http.StatusBadRequest)
+	userID, ok := r.Context().Value("user_id").(uuid.UUID)
+	if !ok {
+		http.Error(w, "Invalid or missing user ID", http.StatusInternalServerError)
 		return
 	}
 
-	userID, err := uuid.Parse(decrypteduserID)
-	if err != nil {
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
-		return
-	}
-
-	// Parse SessionID
 	sessionID, err := uuid.Parse(logoutData.SessionID)
 	if err != nil {
 		http.Error(w, "Invalid session ID", http.StatusBadRequest)
 		return
 	}
 
-	// Retrieve database connection from context
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Execute the query to delete the session
-	result, err := db.Exec(`
+	result, err := db.Exec(r.Context(), `
 		DELETE FROM sessions 
 		WHERE sessionid = $1 AND userid = $2
-	`, sessionID.String(), userID.String())
+	`, sessionID, userID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 		return
 	}
 
-	// Check the number of affected rows
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		http.Error(w, "Failed to get rows affected", http.StatusInternalServerError)
-		return
-	}
-
-	// Handle case where session was not found
+	rowsAffected := result.RowsAffected()
 	if rowsAffected == 0 {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Clear the token cookie
 	http.SetCookie(w, &http.Cookie{
 		Name:     "token",
 		Value:    "",
@@ -606,7 +590,6 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 	})
 
-	// Send success response
 	response := map[string]string{"message": "Session revoked and user logged out successfully"}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
@@ -624,7 +607,7 @@ func generateTemporaryPassword() (string, error) {
 }
 
 func ResetPassword(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var resetData struct {
 		Identifier string `json:"identifier"`
@@ -636,56 +619,56 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err := db.QueryRow(`
+	err := db.QueryRow(r.Context(), `
 		SELECT id, email FROM users 
 		WHERE username = $1 OR email = $1
 	`, resetData.Identifier).Scan(&user.ID, &user.Email)
-	if err == sql.ErrNoRows {
-		http.Error(w, "User not found", http.StatusNotFound)
-		return
-	}
+
+	// Always return success to prevent user enumeration
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			json.NewEncoder(w).Encode(map[string]string{"message": "If the account exists, a password reset email has been sent"})
+			return
+		}
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 
-	// Generate a temporary password for the user
+	// Generate temporary password and update only if user exists
 	tempPassword, err := generateTemporaryPassword()
 	if err != nil {
 		http.Error(w, "Failed to generate temporary password", http.StatusInternalServerError)
 		return
 	}
 
-	// Hash the temporary password using bcrypt
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Failed to hash temporary password", http.StatusInternalServerError)
 		return
 	}
 
-	// Update the user's password in the database
-	_, err = db.Exec(`
+	// Set temporary password expiry to 15 minutes from now
+	tempPasswordExpiry := time.Now().Add(15 * time.Minute)
+	_, err = db.Exec(r.Context(), `
 		UPDATE users 
-		SET password = $1
-		WHERE id = $2
-	`, string(hashedPassword), user.ID)
+		SET password = $1, temp_password_expiry = $2
+		WHERE id = $3
+	`, string(hashedPassword), tempPasswordExpiry, user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
 	}
 
-	// Send an email to the user with the temporary password
+	// Send email only if user exists
 	err = sendPasswordResetEmail(user.Email, tempPassword)
 	if err != nil {
-		http.Error(w, "Failed to send password reset email", http.StatusInternalServerError)
-		return
+		log.Printf("Failed to send password reset email to %s: %v", user.Email, err)
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"message": "Password reset email sent"})
+	json.NewEncoder(w).Encode(map[string]string{"message": "If the account exists, a password reset email has been sent"})
 }
 
 func sendPasswordResetEmail(email, tempPassword string) error {
-	apiKey := os.Getenv("RESEND_API_KEY")
 	client := resend.NewClient(apiKey)
 
 	// Construct the email body
@@ -693,7 +676,7 @@ func sendPasswordResetEmail(email, tempPassword string) error {
 		From:    "Netsocial <noreply@netsocial.app>",
 		To:      []string{email},
 		Subject: "Password Reset for Your Netsocial Account",
-		Html:    fmt.Sprintf("<p>Your temporary password is: <strong>%s</strong></p><p>Please log in and change your password immediately.</p>", tempPassword),
+		Html:    fmt.Sprintf("<p>Your temporary password is: <strong>%s</strong></p><p>Please log in and change your password immediately. Do note this will expire in 15mins</p>", tempPassword),
 	}
 
 	// Send the email using the Resend service
@@ -701,12 +684,12 @@ func sendPasswordResetEmail(email, tempPassword string) error {
 	return err
 }
 
-func Auth(router chi.Router) {
-	router.Post("/auth/signup", (middlewares.DiscordErrorReport(http.HandlerFunc(UserSignup)).ServeHTTP))
-	router.Post("/auth/login", (middlewares.DiscordErrorReport(http.HandlerFunc(UserLogin)).ServeHTTP))
-	router.Post("/auth/logout", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(UserLogout))).ServeHTTP))
-	router.Post("/auth/change-password", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(ChangePassword))).ServeHTTP))
-	router.Delete("/auth/logout/session", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(LogOutSession))).ServeHTTP))
-	router.Get("/auth/@me", (middlewares.DiscordErrorReport(authMiddleware(http.HandlerFunc(CurrentUser))).ServeHTTP))
-	router.Post("/auth/reset-password", (middlewares.DiscordErrorReport(http.HandlerFunc(ResetPassword)).ServeHTTP))
+func Auth(r chi.Router) {
+	r.With(RateLimit(5, 5*time.Minute)).Post("/auth/logout", authMiddleware(http.HandlerFunc(UserLogout)).(http.HandlerFunc))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/auth/change-password", authMiddleware(http.HandlerFunc(ChangePassword)).(http.HandlerFunc))
+	r.Delete("/auth/logout/session", authMiddleware(http.HandlerFunc(LogOutSession)).(http.HandlerFunc))
+	r.Get("/auth/@me", authMiddleware(http.HandlerFunc(CurrentUser)).(http.HandlerFunc))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/auth/signup", UserSignup)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/auth/login", UserLogin)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/auth/reset-password", ResetPassword)
 }

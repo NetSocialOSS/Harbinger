@@ -2,7 +2,6 @@ package routes
 
 import (
 	"net/http"
-	"netsocial/middlewares"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -28,10 +27,11 @@ func RateLimit(limit int, burst time.Duration) func(http.Handler) http.Handler {
 }
 
 func PostRoutes(r chi.Router) {
-	r.With(RateLimit(5, 5*time.Minute)).Post("/comment/add", (middlewares.DiscordErrorReport(http.HandlerFunc(AddComment)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/comment/add", AddComment)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/post/action", PostActions)
+	r.With(RateLimit(5, 5*time.Minute)).Delete("/post/delete", DeletePost)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/post/add", AddPost)
+
 	r.Get("/posts/@all", GetAllPosts)
 	r.Get("/posts/{id}", GetPostById)
-	r.With(RateLimit(5, 5*time.Minute)).Post("/post/action", (middlewares.DiscordErrorReport(http.HandlerFunc(PostActions)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Delete("/post/delete", (middlewares.DiscordErrorReport(http.HandlerFunc(DeletePost)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/post/add", (middlewares.DiscordErrorReport(http.HandlerFunc(AddPost)).ServeHTTP))
 }

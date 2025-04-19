@@ -2,17 +2,17 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
+	"netsocial/database"
 	"netsocial/types"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/karlseguin/ccache/v2"
-	"github.com/lib/pq"
 )
 
 var (
@@ -28,6 +28,8 @@ var (
 		},
 		Timeout: 10 * time.Second,
 	}
+	post   types.Post
+	author types.Author
 )
 
 func init() {
@@ -46,9 +48,9 @@ func purgeCachePeriodically() {
 }
 
 func GetAllPosts(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
-		http.Error(w, "Database connection not available", http.StatusInternalServerError)
+		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
@@ -63,12 +65,12 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, "isIndexed"
+	query := `SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
 			FROM post
-			WHERE "isIndexed" = true
+			WHERE isIndexed = true
 			ORDER BY createdat DESC`
 
-	rows, err := db.QueryContext(ctx, query)
+	rows, err := db.Query(ctx, query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -77,14 +79,13 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 
 	var posts []types.Post
 	for rows.Next() {
-		var post types.Post
 		var commentsJSON []byte
-		var pollJSON sql.NullString
-		var scheduledFor sql.NullTime
+		var pollJSON *string
+		var scheduledFor *time.Time
 
 		err := rows.Scan(
 			&post.ID, &post.Title, &post.Content, &post.Author, &post.Coterie, &scheduledFor,
-			pq.Array(&post.Image), &pollJSON, &post.CreatedAt, pq.Array(&post.Hearts),
+			&post.Image, &pollJSON, &post.CreatedAt, &post.Hearts,
 			&commentsJSON, &post.Indexing,
 		)
 		if err != nil {
@@ -92,8 +93,8 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if scheduledFor.Valid {
-			post.ScheduledFor = scheduledFor.Time
+		if scheduledFor != nil {
+			post.ScheduledFor = *scheduledFor
 		} else {
 			post.ScheduledFor = time.Time{}
 		}
@@ -103,14 +104,14 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Handle the poll
-		if pollJSON.Valid {
+		if pollJSON != nil {
 			var decodedPoll []types.Poll
-			err := json.Unmarshal([]byte(pollJSON.String), &decodedPoll)
+			err := json.Unmarshal([]byte(*pollJSON), &decodedPoll)
 
 			// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
 			if err != nil {
 				var singlePoll types.Poll
-				if err := json.Unmarshal([]byte(pollJSON.String), &singlePoll); err != nil {
+				if err := json.Unmarshal([]byte(*pollJSON), &singlePoll); err != nil {
 					http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
 					return
 				}
@@ -131,14 +132,13 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		var author types.Author
 		cachedAuthor := userCache.Get(post.Author)
 		if cachedAuthor != nil {
 			author = cachedAuthor.Value().(types.Author)
 		} else {
 			authorQuery := `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner
 				FROM users WHERE id = $1`
-			err := db.QueryRowContext(ctx, authorQuery, post.Author).Scan(
+			err := db.QueryRow(ctx, authorQuery, post.Author).Scan(
 				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
 				&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
 			)
@@ -177,20 +177,20 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			cachedHeartAuthor := userCache.Get(userID.String())
-			if cachedHeartAuthor == nil {
-				var heartAuthor types.Author
-				err := db.QueryRowContext(ctx, `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner FROM users WHERE id = $1`, userID.String()).Scan(
-					&heartAuthor.Username, &heartAuthor.IsVerified, &heartAuthor.IsOrganisation, &heartAuthor.ProfileBanner, &heartAuthor.ProfilePicture,
-					&heartAuthor.IsDeveloper, &heartAuthor.IsOwner, &heartAuthor.IsModerator, &heartAuthor.IsPartner,
+			cachedauthor := userCache.Get(userID.String())
+			if cachedauthor == nil {
+
+				err := db.QueryRow(ctx, `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner FROM users WHERE id = $1`, userID.String()).Scan(
+					&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
+					&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
 				)
 				if err != nil {
 					continue
 				}
-				heartsDetails = append(heartsDetails, heartAuthor.Username)
-				userCache.Set(userID.String(), heartAuthor, time.Minute*3)
+				heartsDetails = append(heartsDetails, author.Username)
+				userCache.Set(userID.String(), author, time.Minute*3)
 			} else {
-				cachedAuthor := cachedHeartAuthor.Value().(types.Author)
+				cachedAuthor := cachedauthor.Value().(types.Author)
 				heartsDetails = append(heartsDetails, cachedAuthor.Username)
 			}
 		}

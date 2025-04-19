@@ -1,53 +1,54 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
 
+	"netsocial/database"
 	"netsocial/types"
 
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/lib/pq"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 // Function to handle fetching a single post by ID from PostgreSQL
 func GetPostById(w http.ResponseWriter, r *http.Request) {
 	postID := chi.URLParam(r, "id")
 
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	var scheduledFor sql.NullTime
-	var image pq.StringArray
-	var coterie sql.NullString
-	var hearts pq.StringArray
-	var comments sql.NullString
-	var poll sql.NullString
+	var scheduledFor *time.Time
+	var image []string
+	var coterie *string
+	var hearts []string
+	var comments *string
+	var poll *string
 
 	var post types.Post
 	query := `
 			SELECT id, author, title, content, coterie, scheduledFor, image, poll, createdAt, hearts, comments
 			FROM Post WHERE id = $1`
-	err := db.QueryRow(query, postID).Scan(
+	err := db.QueryRow(context.Background(), query, postID).Scan(
 		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
 		&poll, &post.CreatedAt, &hearts, &comments)
 
-	if comments.Valid && comments.String != "" {
+	if comments != nil && *comments != "" {
 		var commentList []types.Comment
 
 		// Try to unmarshal the comments field into a slice of Comment
-		if err := json.Unmarshal([]byte(comments.String), &commentList); err != nil {
+		if err := json.Unmarshal([]byte(*comments), &commentList); err != nil {
 			// If unmarshalling into a slice fails, try unmarshalling into a single Comment object
 			var singleComment types.Comment
-			if err := json.Unmarshal([]byte(comments.String), &singleComment); err != nil {
+			if err := json.Unmarshal([]byte(*comments), &singleComment); err != nil {
 				// Log the issue and default to an empty list without crashing
 				post.Comments = []types.Comment{}
 			} else {
@@ -63,7 +64,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 
 	// Handle error if the query fails
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err.Error() == "no rows in result set" {
 			http.Error(w, "Post not found", http.StatusNotFound)
 			return
 		}
@@ -72,15 +73,15 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Assign the scheduledFor time if it's not NULL
-	if scheduledFor.Valid {
-		post.ScheduledFor = scheduledFor.Time
+	if scheduledFor != nil {
+		post.ScheduledFor = *scheduledFor
 	} else {
 		post.ScheduledFor = time.Time{}
 	}
 
 	// Handle the nullable coterie field
-	if coterie.Valid {
-		post.Coterie = coterie.String
+	if coterie != nil {
+		post.Coterie = *coterie
 	} else {
 		post.Coterie = ""
 	}
@@ -100,14 +101,14 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Handle the poll
-	if poll.Valid {
+	if poll != nil {
 		var decodedPoll []types.Poll
-		err := json.Unmarshal([]byte(poll.String), &decodedPoll)
+		err := json.Unmarshal([]byte(*poll), &decodedPoll)
 
 		// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
 		if err != nil {
 			var singlePoll types.Poll
-			if err := json.Unmarshal([]byte(poll.String), &singlePoll); err != nil {
+			if err := json.Unmarshal([]byte(*poll), &singlePoll); err != nil {
 				http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
 				return
 			}
@@ -122,7 +123,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var author types.Author
 	query = `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isPartner, isOwner, isModerator, createdAt
 						FROM users WHERE id = $1`
-	err = db.QueryRow(query, post.Author).Scan(
+	err = db.QueryRow(context.Background(), query, post.Author).Scan(
 		&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
 		&author.IsDeveloper, &author.IsPartner, &author.IsOwner, &author.IsModerator, &author.CreatedAt)
 	if err != nil {
@@ -136,12 +137,12 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 		var commentAuthor types.Author
 		query := `SELECT username, isVerified, isOrganisation, profilePicture, isOwner, isModerator, isDeveloper
 						FROM users WHERE id = $1`
-		err = db.QueryRow(query, comment.Author).Scan(
+		err = db.QueryRow(context.Background(), query, comment.Author).Scan(
 			&commentAuthor.Username, &commentAuthor.IsVerified, &commentAuthor.IsOrganisation, &commentAuthor.ProfilePicture,
 			&commentAuthor.IsOwner, &commentAuthor.IsModerator, &commentAuthor.IsDeveloper)
 
 		// Handle if no rows were returned (author doesn't exist)
-		if err == sql.ErrNoRows {
+		if err != nil && err.Error() == "no rows in result set" {
 			commentAuthor.Username = "Unknown"
 			commentAuthor.IsVerified = false
 			commentAuthor.IsOrganisation = false
@@ -186,7 +187,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var heartsWithUsernames []string
 	for _, heartID := range post.Hearts {
 		var heartAuthor types.Author
-		if err := db.QueryRow(`SELECT username FROM users WHERE id = $1`, heartID).Scan(&heartAuthor.Username); err != nil {
+		if err := db.QueryRow(context.Background(), `SELECT username FROM users WHERE id = $1`, heartID).Scan(&heartAuthor.Username); err != nil {
 			heartsWithUsernames = append(heartsWithUsernames, "Unknown")
 			continue
 		}

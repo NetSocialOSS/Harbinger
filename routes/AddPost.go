@@ -1,23 +1,26 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/lib/pq"
 )
 
-func generateUniqueID(db *sql.DB) (string, error) {
+func generateUniqueID(db *pgxpool.Pool) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -30,7 +33,7 @@ func generateUniqueID(db *sql.DB) (string, error) {
 
 		// Check if the ID already exists in PostgreSQL
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM post WHERE id = $1", id).Scan(&count)
+		err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM post WHERE id = $1", id).Scan(&count)
 		if err != nil {
 			return "", err
 		}
@@ -41,7 +44,8 @@ func generateUniqueID(db *sql.DB) (string, error) {
 }
 
 func AddPost(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
+	var err error
 	if db == nil {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
@@ -104,16 +108,9 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate user ID
-	_, err = uuid.Parse(userID)
-	if err != nil {
-		http.Error(w, "Invalid user ID.", http.StatusBadRequest)
-		return
-	}
-
 	// Check if the user is banned
 	var isBanned bool
-	err = db.QueryRow("SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
+	err = db.QueryRow(context.Background(), "SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return
@@ -127,7 +124,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	// Check if the user is a member of the coterie (if provided)
 	if coterieName != "" {
 		var members []string
-		err = db.QueryRow("SELECT members FROM coterie WHERE name = $1", coterieName).Scan(pq.Array(&members))
+		err = db.QueryRow(context.Background(), "SELECT members FROM coterie WHERE name = $1", coterieName).Scan(pq.Array(&members))
 		if err != nil {
 			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
 			return
@@ -211,12 +208,13 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 
 	// Insert new post into the database
 	query := `
-    INSERT INTO post (id, title, content, author, "isIndexed", createdAt, coterie, scheduledfor, image, poll, hearts)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	INSERT INTO post (id, title, content, author, isIndexed, coterie, scheduledfor, image, poll, hearts)
+	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
-	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}))
+	_, err = db.Exec(context.Background(), query, postID, title, content, userID, indexing, coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}))
 	if err != nil {
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
+		log.Println(err)
 		return
 	}
 

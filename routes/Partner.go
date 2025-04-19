@@ -1,26 +1,28 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 // GetAllPartner retrieves all partners from the DB
 func GetAllPartner(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Database connection not available - partners", http.StatusInternalServerError)
 		return
 	}
 
-	rows, err := db.Query("SELECT id, banner, logo, title, text, link FROM partner")
+	rows, err := db.Query(context.Background(), "SELECT id, banner, logo, title, text, link FROM partner")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -46,28 +48,31 @@ func GetAllPartner(w http.ResponseWriter, r *http.Request) {
 }
 
 func AddNewPartner(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error":"Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
-
-	encryptedid := r.Header.Get("X-userId")
 
 	Title := r.URL.Query().Get("name")
 	text := r.URL.Query().Get("description")
 	Link := r.URL.Query().Get("link")
 	Logo := r.URL.Query().Get("logo")
 	Banner := r.URL.Query().Get("banner")
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	decryptedUserID, err := middlewares.DecryptAES(encryptedid)
+	decryptedUserID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, `{"error":"Failed to decrypt user ID"}`, http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
 	var isDeveloper, isOwner bool
-	err = db.QueryRow(`SELECT isdeveloper, isowner FROM users WHERE id = $1`, decryptedUserID).Scan(&isDeveloper, &isOwner)
+	err = db.QueryRow(context.Background(), `SELECT isdeveloper, isowner FROM users WHERE id = $1`, decryptedUserID).Scan(&isDeveloper, &isOwner)
 	if err != nil {
 		http.Error(w, `{"error":"User not found or not authorized"}`, http.StatusForbidden)
 		return
@@ -79,7 +84,6 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newPartner := types.Partner{
-		ID:     uuid.New().String(),
 		Title:  Title,
 		Text:   text,
 		Link:   Link,
@@ -87,10 +91,10 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 		Logo:   Logo,
 	}
 
-	_, err = db.Exec(`
-        INSERT INTO partner (id, title, text, link, banner, logo) 
-        VALUES ($1, $2, $3, $4, $5, $6)`,
-		newPartner.ID, newPartner.Title, newPartner.Text, newPartner.Link, newPartner.Banner, newPartner.Logo,
+	_, err = db.Exec(context.Background(), `
+		INSERT INTO partner (title, text, link, banner, logo) 
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		newPartner.Title, newPartner.Text, newPartner.Link, newPartner.Banner, newPartner.Logo,
 	)
 	if err != nil {
 		http.Error(w, `{"error":"Failed to insert partner"}`, http.StatusInternalServerError)
@@ -111,6 +115,6 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 }
 
 func Partner(r chi.Router) {
-	r.Get("/partners/@all", GetAllPartner)
-	r.Post("/partner/new", AddNewPartner)
+	r.With(RateLimit(5, 5*time.Minute)).Get("/partners/@all", GetAllPartner)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/partner/new", AddNewPartner)
 }

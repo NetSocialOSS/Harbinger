@@ -2,24 +2,30 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
+	"netsocial/database"
 	"netsocial/middlewares"
-	"os"
+	"netsocial/types"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/gtuk/discordwebhook"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
+var config types.Config
+
+var webhookURL string
+
 // getReporterUsername fetches the reporter's username from the database
-func getReporterUsername(ctx context.Context, db *sql.DB, reporterID string) (string, error) {
+func getReporterUsername(ctx context.Context, db *pgxpool.Pool, reporterID string) (string, error) {
 	query := "SELECT username FROM users WHERE id = $1"
 	var username string
-	err := db.QueryRowContext(ctx, query, reporterID).Scan(&username)
+	err := db.QueryRow(ctx, query, reporterID).Scan(&username)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			return "", nil
 		}
 		return "", fmt.Errorf("error fetching reporter username: %v", err)
@@ -31,15 +37,19 @@ func getReporterUsername(ctx context.Context, db *sql.DB, reporterID string) (st
 func ReportUser(w http.ResponseWriter, r *http.Request) {
 	reportedUsername := r.URL.Query().Get("reportedUsername")
 	reason := r.URL.Query().Get("reason")
-	encryptedreporterID := r.Header.Get("X-userID")
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	reporterID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
@@ -50,8 +60,6 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error": "Invalid reporter ID"}`, http.StatusBadRequest)
 		return
 	}
-
-	webhookURL := os.Getenv("Report_URL")
 
 	title := "User Report"
 	description := fmt.Sprintf("[Reported User: %s](https://netsocial.app/user/%s)", reportedUsername, reportedUsername)
@@ -92,15 +100,19 @@ func ReportUser(w http.ResponseWriter, r *http.Request) {
 func ReportPost(w http.ResponseWriter, r *http.Request) {
 	reportedPostID := r.URL.Query().Get("reportedPostID")
 	reason := r.URL.Query().Get("reason")
-	encryptedreporterID := r.Header.Get("X-userID")
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
 
-	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	reporterID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
@@ -114,17 +126,15 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 
 	query := "SELECT id FROM Post WHERE id = $1"
 	var postID string
-	err = db.QueryRowContext(r.Context(), query, reportedPostID).Scan(&postID)
+	err = db.QueryRow(r.Context(), query, reportedPostID).Scan(&postID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			http.Error(w, `{"error": "Invalid reported post ID"}`, http.StatusBadRequest)
 			return
 		}
 		http.Error(w, "Failed to check post existence", http.StatusInternalServerError)
 		return
 	}
-
-	webhookURL := os.Getenv("Report_URL")
 
 	title := "Post Report"
 	description := fmt.Sprintf("[Reported Post](https://netsocial.app/post/%s)", reportedPostID)
@@ -165,15 +175,20 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 	coterieName := r.URL.Query().Get("Coterie")
 	reason := r.URL.Query().Get("reason")
-	encryptedreporterID := r.Header.Get("X-userID")
 
-	reporterID, err := middlewares.DecryptAES(encryptedreporterID)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	reporterID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	reporterUsername, err := getReporterUsername(r.Context(), db, reporterID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch reporter username"}`, http.StatusInternalServerError)
@@ -187,17 +202,15 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 
 	query := "SELECT name FROM coterie WHERE name = $1"
 	var name string
-	err = db.QueryRowContext(r.Context(), query, coterieName).Scan(&name)
+	err = db.QueryRow(r.Context(), query, coterieName).Scan(&name)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			http.Error(w, `{"error": "Invalid reported coterie name"}`, http.StatusBadRequest)
 			return
 		}
 		http.Error(w, "Failed to check coterie existence", http.StatusInternalServerError)
 		return
 	}
-
-	webhookURL := os.Getenv("Report_URL")
 
 	title := "🚨 Coterie Report 🚨"
 	description := fmt.Sprintf("[Reported Coterie](https://netsocial.app/coterie/%s)", coterieName)
@@ -235,7 +248,7 @@ func ReportCoterie(w http.ResponseWriter, r *http.Request) {
 }
 
 func Report(r chi.Router) {
-	r.With(RateLimit(5, 5*time.Minute)).Post("/report/user", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportUser))).ServeHTTP)
-	r.With(RateLimit(5, 5*time.Minute)).Post("/report/post", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportPost))).ServeHTTP)
-	r.With(RateLimit(5, 5*time.Minute)).Post("/report/coterie", (middlewares.DiscordErrorReport(http.HandlerFunc(ReportCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/user", ReportUser)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/post", ReportPost)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/report/coterie", ReportCoterie)
 }

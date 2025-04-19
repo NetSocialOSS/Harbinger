@@ -8,8 +8,10 @@ Use this section to inform users about the versions of the Go API currently supp
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
-| 2.0.x   | :white_check_mark: |
+| 1.0.x   | :red_check_mark:   |
+| 2.0.x   | :red_check_mark:   |
+| 3.0.x   | :white_check_mark: |
+| 4.0.x   | :white_check_mark: |
 
 ---
 

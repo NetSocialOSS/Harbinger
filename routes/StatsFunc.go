@@ -2,17 +2,17 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
-	"netsocial/middlewares"
+	"netsocial/database"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 // getCount retrieves the count of records from the specified table
 func getCount(w http.ResponseWriter, r *http.Request, tableName string, fieldName string) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
@@ -20,7 +20,7 @@ func getCount(w http.ResponseWriter, r *http.Request, tableName string, fieldNam
 
 	query := "SELECT COUNT(*) FROM \"" + tableName + "\""
 	var total int
-	if err := db.QueryRowContext(context.Background(), query).Scan(&total); err != nil {
+	if err := db.QueryRow(context.Background(), query).Scan(&total); err != nil {
 		http.Error(w, "Error counting records", http.StatusInternalServerError)
 		return
 	}
@@ -49,10 +49,10 @@ func TotalCoterieCount(w http.ResponseWriter, r *http.Request) {
 	getCount(w, r, "coterie", "total_coteries")
 }
 
-// Stats registers the statistics routes with the Chi router
+// Stats
 func Stats(r chi.Router) {
-	r.Get("/stats/posts/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalPostsCount)).ServeHTTP))
-	r.Get("/stats/coterie/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalCoterieCount)).ServeHTTP))
-	r.Get("/stats/partners/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(TotalPartnersCount)).ServeHTTP))
-	r.Get("/stats/users/@all", (middlewares.DiscordErrorReport(http.HandlerFunc(RegistergedUserNum)).ServeHTTP))
+	r.Get("/stats/posts/@all", TotalPostsCount)
+	r.Get("/stats/coterie/@all", TotalCoterieCount)
+	r.Get("/stats/partners/@all", TotalPartnersCount)
+	r.Get("/stats/users/@all", RegistergedUserNum)
 }

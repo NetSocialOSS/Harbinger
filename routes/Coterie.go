@@ -2,7 +2,6 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,19 +12,27 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgtype"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/lib/pq"
 
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 )
 
-func getUserDetails(db *sql.DB, userID uuid.UUID, cache map[uuid.UUID]map[string]string) (map[string]string, error) {
+var (
+	coterie types.Coterie
+)
+
+func getUserDetails(db *pgxpool.Pool, userID uuid.UUID, cache map[uuid.UUID]map[string]string) (map[string]string, error) {
 	if userDetails, exists := cache[userID]; exists {
 		return userDetails, nil
 	}
 
 	var user types.User
-	err := db.QueryRowContext(context.Background(), `SELECT id, username, profilepicture FROM users WHERE id = $1`, userID).Scan(&user.ID, &user.Username, &user.ProfilePicture)
+	err := db.QueryRow(context.Background(), `SELECT id, username, profilepicture FROM users WHERE id = $1`, userID).Scan(&user.ID, &user.Username, &user.ProfilePicture)
 	if err != nil {
 		return nil, err
 	}
@@ -40,10 +47,10 @@ func getUserDetails(db *sql.DB, userID uuid.UUID, cache map[uuid.UUID]map[string
 }
 
 func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
-	rows, err := db.Query(`
-			SELECT id, name, description, createdat, avatar, banner, members, "isVerified", "isOrganisation"
+	rows, err := db.Query(context.Background(), `
+			SELECT id, name, description, createdat, avatar, banner, members, isVerified, isOrganisation
 			FROM coterie
 			ORDER BY createdat ASC;
 	`)
@@ -57,13 +64,13 @@ func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
 
 	for rows.Next() {
 		var coterie types.Coterie
-		if err := rows.Scan(&coterie.ID, &coterie.Name, &coterie.Description, &coterie.CreatedAt, &coterie.Avatar, &coterie.Banner, pq.Array(&coterie.Members), &coterie.IsVerified, &coterie.IsOrganisation); err != nil {
+		if err := rows.Scan(&coterie.ID, &coterie.Name, &coterie.Description, &coterie.CreatedAt, &coterie.Avatar, &coterie.Banner, &coterie.Members, &coterie.IsVerified, &coterie.IsOrganisation); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
 		var postCount int
-		err = db.QueryRow(`
+		err = db.QueryRow(context.Background(), `
 					SELECT COUNT(*) FROM post WHERE coterie = $1
 			`, coterie.Name).Scan(&postCount)
 		if err != nil {
@@ -101,7 +108,7 @@ func GetAllCoterie(w http.ResponseWriter, r *http.Request) {
 
 func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	// Get the PostgreSQL connection from the context
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Database connection not found", http.StatusInternalServerError)
 		return
@@ -115,14 +122,14 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	var coterie types.Coterie
 	var rolesJSON []byte
 
-	err := db.QueryRowContext(context.Background(), `
-	SELECT id, name, description, members, owner, createdat, banner, avatar, "isChatAllowed", "isVerified", "isOrganisation", roles, bannedmembers
+	err := db.QueryRow(context.Background(), `
+	SELECT id, name, description, members, owner, createdat, banner, avatar, isChatAllowed, isVerified, isOrganisation, roles, bannedmembers
 	FROM coterie WHERE name ILIKE $1
 `, coterieName).Scan(
 		&coterie.ID,
 		&coterie.Name,
 		&coterie.Description,
-		pq.Array(&coterie.Members),
+		&coterie.Members,
 		&coterie.Owner,
 		&coterie.CreatedAt,
 		&coterie.Banner,
@@ -131,11 +138,11 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 		&coterie.IsVerified,
 		&coterie.IsOrganisation,
 		&rolesJSON,
-		pq.Array(&coterie.BannedMembers),
+		&coterie.BannedMembers,
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			http.Error(w, "Coterie not found", http.StatusNotFound)
 			return
 		}
@@ -228,7 +235,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 
 	// Count posts for the coterie
 	var postCount int
-	err = db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM post WHERE coterie = $1`, coterie.Name).Scan(&postCount)
+	err = db.QueryRow(context.Background(), `SELECT COUNT(*) FROM post WHERE coterie = $1`, coterie.Name).Scan(&postCount)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -239,7 +246,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	var posts []map[string]interface{}
 	if action == "posts" || action == "" || action == "all" {
 
-		rows, err := db.QueryContext(context.Background(), `
+		rows, err := db.Query(context.Background(), `
 			SELECT id, title, content, author, scheduledfor, image, hearts, createdat, poll, comments
 			FROM post WHERE coterie = $1 ORDER BY createdat DESC
 		`, coterie.Name)
@@ -248,19 +255,19 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		var scheduledFor pq.NullTime
+		var scheduledFor pgtype.Timestamp
 		var pollJSON *json.RawMessage
-		var commentsJSON sql.NullString
+		var commentsJSON pgtype.Text
 
 		for rows.Next() {
 			var post types.Post
-			err := rows.Scan(&post.ID, &post.Title, &post.Content, &post.Author, &scheduledFor, pq.Array(&post.Image), pq.Array(&post.Hearts), &post.CreatedAt, &pollJSON, &commentsJSON)
+			err := rows.Scan(&post.ID, &post.Title, &post.Content, &post.Author, &scheduledFor, &post.Image, &post.Hearts, &post.CreatedAt, &pollJSON, &commentsJSON)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
 
-			if commentsJSON.Valid {
+			if commentsJSON.Status == pgtype.Present {
 				var commentList []types.Comment
 				if err := json.Unmarshal([]byte(commentsJSON.String), &commentList); err != nil {
 					http.Error(w, fmt.Sprintf("Failed to decode comments: %v", err), http.StatusInternalServerError)
@@ -279,14 +286,14 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if scheduledFor.Valid {
+			if scheduledFor.Status == pgtype.Present {
 				post.ScheduledFor = scheduledFor.Time
 			} else {
 				post.ScheduledFor = time.Time{} // Default zero value for time.Time
 			}
 
 			var author types.User
-			err = db.QueryRowContext(context.Background(), `SELECT id, username, profilepicture, profilebanner, isverified, isorganisation, isdeveloper, ispartner, isowner, ismoderator FROM users WHERE id = $1`, post.Author).Scan(&author.ID, &author.Username, &author.ProfilePicture, &author.ProfileBanner, &author.IsVerified, &author.IsOrganisation, &author.IsDeveloper, &author.IsPartner, &author.IsOwner, &author.IsModerator)
+			err = db.QueryRow(context.Background(), `SELECT id, username, profilepicture, profilebanner, isverified, isorganisation, isdeveloper, ispartner, isowner, ismoderator FROM users WHERE id = $1`, post.Author).Scan(&author.ID, &author.Username, &author.ProfilePicture, &author.ProfileBanner, &author.IsVerified, &author.IsOrganisation, &author.IsDeveloper, &author.IsPartner, &author.IsOwner, &author.IsModerator)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -323,7 +330,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			}
 
 			now := time.Now()
-			if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
+			if scheduledFor.Status == pgtype.Present && !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
 				continue
 			}
 
@@ -365,13 +372,18 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 }
 
 func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	title := r.Header.Get("X-name")
-	encryptedOwner := r.Header.Get("X-userID")
 
 	// Decrypt the user ID
-	owner, err := middlewares.DecryptAES(encryptedOwner)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	owner, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
@@ -382,9 +394,9 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var user types.User
 	// Ensure the user struct matches the correct type for the database schema
-	err = db.QueryRow("SELECT id FROM users WHERE id = $1", owner).Scan(&user.ID) // Assuming 'ID' is a string field
+	var user types.User
+	err = db.QueryRow(context.Background(), "SELECT id FROM users WHERE id = $1", owner).Scan(&user.ID)
 	if err != nil {
 		http.Error(w, "Error checking owner existence: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -398,17 +410,17 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the coterie already exists
 	var existingCoterie types.Coterie
-	err = db.QueryRow("SELECT name FROM coterie WHERE name = $1", title).Scan(&existingCoterie.Name)
+	err = db.QueryRow(context.Background(), "SELECT name FROM coterie WHERE name = $1", title).Scan(&existingCoterie.Name)
 	if err == nil {
 		http.Error(w, "A coterie with this name already exists", http.StatusConflict)
 		return
 	}
 
 	// Insert the new coterie
-	_, err = db.Exec(`
-			INSERT INTO coterie (id, name, description, members, owner, createdat)
-			VALUES ($1, $2, $3, $4, $5, $6)`,
-		uuid.New().String(), title, "", pq.Array([]string{owner}), owner, time.Now(),
+	_, err = db.Exec(context.Background(), `
+    INSERT INTO coterie (name, description, members, owner, createdat)
+    VALUES ($1, $2, $3, $4, $5)`,
+		title, "", []string{owner}, owner, time.Now(),
 	)
 	if err != nil {
 		http.Error(w, "Failed to create coterie: "+err.Error(), http.StatusInternalServerError)
@@ -416,9 +428,7 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]interface{}{
-		"id":        uuid.New().String(),
 		"name":      title,
-		"owner":     owner,
 		"createdAt": time.Now(),
 	}
 
@@ -427,23 +437,28 @@ func AddNewCoterie(w http.ResponseWriter, r *http.Request) {
 }
 
 func CoterieMembership(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	coterieName := r.Header.Get("X-name")
-	encryptedUserID := r.Header.Get("X-userID")
 	action := r.Header.Get("X-action")
 
-	userID, err := middlewares.DecryptAES(encryptedUserID)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
 	// Check if user exists
 	var user types.User
-	err = db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&user.Username)
+	err = db.QueryRow(context.Background(), "SELECT username FROM users WHERE id = $1", userID).Scan(&user.Username)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "User not found", http.StatusNotFound)
 		} else {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -458,7 +473,7 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 
 	// Find coterie
 	var coterie types.Coterie
-	err = db.QueryRow("SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.Name)
+	err = db.QueryRow(context.Background(), "SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.Name)
 	if err != nil {
 		http.Error(w, "Coterie not found", http.StatusNotFound)
 		return
@@ -467,7 +482,7 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "join":
 		// Add user to the coterie
-		_, err = db.Exec(`
+		_, err = db.Exec(context.Background(), `
 					UPDATE coterie SET members = array_append(members, $1) WHERE name = $2`,
 			userID, coterieName,
 		)
@@ -483,7 +498,7 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 
 	case "leave":
 		// Remove user from coterie
-		_, err = db.Exec(`
+		_, err = db.Exec(context.Background(), `
 					UPDATE coterie SET members = array_remove(members, $1) WHERE name = $2`,
 			userID, coterieName,
 		)
@@ -503,85 +518,38 @@ func CoterieMembership(w http.ResponseWriter, r *http.Request) {
 }
 
 func SetWarningLimit(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
-	// Get query parameters
 	name := r.URL.Query().Get("name")
 	limitStr := r.URL.Query().Get("limitnumber")
-	encryptedUserID := r.Header.Get("X-userID")
 
-	// Decrypt and parse the user ID
-	ownerIDStr, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Convert limit to integer
+	ownerID, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
 	limit, err := strconv.Atoi(limitStr)
 	if err != nil || limit < 1 || limit > 9 {
 		http.Error(w, "Invalid warning limit. Must be between 1 and 9.", http.StatusBadRequest)
 		return
 	}
 
-	// Parse the owner ID
-	ownerID, err := uuid.Parse(ownerIDStr)
-	if err != nil {
-		http.Error(w, "Invalid OwnerID.", http.StatusBadRequest)
-		return
-	}
-
-	// Check if the coterie exists and retrieve owner details
-	var dbOwnerID string
+	var dbOwnerID uuid.UUID
 	var dbWarningLimit int
-	err = db.QueryRow(`SELECT owner, warninglimit FROM coterie WHERE name = $1`, name).Scan(&dbOwnerID, &dbWarningLimit)
+	err = db.QueryRow(r.Context(), `SELECT owner, warninglimit FROM coterie WHERE name = $1`, name).Scan(&dbOwnerID, &dbWarningLimit)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Coterie not found.", http.StatusNotFound)
 		} else {
 			http.Error(w, "Error fetching coterie details.", http.StatusInternalServerError)
 		}
-		return
-	}
-
-	// Check if the current user is the owner
-	if dbOwnerID != ownerID.String() {
-		http.Error(w, "Unauthorized. Only the coterie owner can update the warning limit.", http.StatusUnauthorized)
-		return
-	}
-
-	// Update the warning limit for the coterie
-	_, err = db.Exec(`UPDATE coterie SET warninglimit = $1 WHERE name = $2 AND owner = $3`, limit, name, ownerID.String())
-	if err != nil {
-		http.Error(w, "Failed to update warning limit.", http.StatusInternalServerError)
-		return
-	}
-
-	// Send response
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":      "Warning limit updated",
-		"warningLimit": limit,
-	})
-}
-
-// UpdateCoterie function
-func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
-	// Extract database connection from context
-	db := r.Context().Value("db").(*sql.DB)
-
-	// Parse query parameters
-	newName := r.URL.Query().Get("newName")
-	coterieName := r.URL.Query().Get("name")
-	newDescription := r.URL.Query().Get("newDescription")
-	newBanner := r.URL.Query().Get("newBanner")
-	newAvatar := r.URL.Query().Get("newAvatar")
-	isChatAllowedStr := r.URL.Query().Get("isChatAllowed")
-	encryptedUserID := r.Header.Get("X-userID")
-
-	// Decrypt and parse the user ID
-	ownerID, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
 		return
 	}
 
@@ -590,12 +558,48 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid owner ID", http.StatusBadRequest)
 		return
 	}
+	if dbOwnerID != ownerUUID {
+		http.Error(w, "Unauthorized. Only the coterie owner can update the warning limit.", http.StatusUnauthorized)
+		return
+	}
 
-	// Build dynamic SQL update query
+	_, err = db.Exec(r.Context(), `UPDATE coterie SET warninglimit = $1 WHERE name = $2 AND owner = $3`, limit, name, ownerID)
+	if err != nil {
+		http.Error(w, "Failed to update warning limit.", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":      "Warning limit updated",
+		"warningLimit": limit,
+	})
+}
+
+func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
+
+	newName := r.URL.Query().Get("newName")
+	coterieName := r.URL.Query().Get("name")
+	newDescription := r.URL.Query().Get("newDescription")
+	newBanner := r.URL.Query().Get("newBanner")
+	newAvatar := r.URL.Query().Get("newAvatar")
+	isChatAllowedStr := r.URL.Query().Get("isChatAllowed")
+
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	ownerID, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
 	updateFields := []string{}
 	updateValues := []interface{}{}
 
-	// Dynamically construct the SQL update fields and parameters
 	index := 1
 	if newName != "" {
 		updateFields = append(updateFields, fmt.Sprintf("name = $%d", index))
@@ -623,7 +627,7 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid value for IsChatAllowed, must be true or false", http.StatusBadRequest)
 			return
 		}
-		updateFields = append(updateFields, fmt.Sprintf("\"isChatAllowed\" = $%d", index))
+		updateFields = append(updateFields, fmt.Sprintf("isChatAllowed = $%d", index))
 		updateValues = append(updateValues, isChatAllowed)
 		index++
 	}
@@ -633,23 +637,20 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Construct the final query
 	query := fmt.Sprintf(`
 			UPDATE coterie
 			SET %s
 			WHERE LOWER(name) = LOWER($%d) AND owner = $%d
-			RETURNING id, name, description, banner, avatar, "isChatAllowed", owner`,
+			RETURNING id, name, description, banner, avatar, isChatAllowed, owner`,
 		strings.Join(updateFields, ", "), index, index+1)
 
-	updateValues = append(updateValues, coterieName, ownerUUID.String())
+	updateValues = append(updateValues, coterieName, ownerID)
 
-	// Execute the query
-	row := db.QueryRow(query, updateValues...)
+	row := db.QueryRow(r.Context(), query, updateValues...)
 
-	// Process response and handle errors
 	var coterie types.Coterie
 	if err := row.Scan(&coterie.ID, &coterie.Name, &coterie.Description, &coterie.Banner, &coterie.Avatar, &coterie.IsChatAllowed, &coterie.Owner); err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Coterie not found or you are not the owner", http.StatusNotFound)
 		} else {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -657,7 +658,6 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Respond with success
 	response := map[string]interface{}{
 		"message": "Coterie updated successfully",
 		"coterie": coterie,
@@ -669,39 +669,48 @@ func UpdateCoterie(w http.ResponseWriter, r *http.Request) {
 }
 
 func WarnMember(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	coterieName := r.URL.Query().Get("CoterieName")
 	membername := r.URL.Query().Get("username")
-	encryptedUserID := r.Header.Get("X-userID")
 	reason := r.URL.Query().Get("reason")
 
-	// Decrypt and parse the user ID
-	modIDStr, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Find member
+	modID, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+		return
+	}
+
 	var member types.User
-	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, membername).Scan(&member.ID)
+	err = db.QueryRow(r.Context(), `SELECT id FROM users WHERE username = $1`, membername).Scan(&member.ID)
 	if err != nil {
-		http.Error(w, "Member not found", http.StatusNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Member not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	// Find coterie and roles
 	var coterie types.Coterie
 	var warningDetailsJson []byte
-	var owner string
-	var rolesText sql.NullString
-	err = db.QueryRow(`
-		SELECT id, members, warningDetails, roles, owner
-		FROM coterie WHERE name = $1
-	`, coterieName).Scan(&coterie.ID, pq.Array(&coterie.Members), &warningDetailsJson, &rolesText, &owner)
+	var owner uuid.UUID
+	var rolesText pgtype.Text
+	err = db.QueryRow(r.Context(), `
+			SELECT id, members, warningDetails, roles, owner
+			FROM coterie WHERE name = $1`, coterieName).Scan(&coterie.ID, pq.Array(&coterie.Members), &warningDetailsJson, &rolesText, &owner)
 	if err != nil {
-		http.Error(w, "Coterie not found", http.StatusNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Coterie not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -714,16 +723,13 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	isAuthorized := false
-
-	roles := []string{}
-	if rolesText.Valid {
-		roles = append([]string{owner}, strings.Split(rolesText.String, ",")...)
-	} else {
-		roles = []string{owner}
+	roles := []string{owner.String()}
+	if rolesText.Status == pgtype.Present {
+		roles = append(roles, strings.Split(rolesText.String, ",")...)
 	}
 
 	for _, role := range roles {
-		if role == modIDStr {
+		if role == modID {
 			isAuthorized = true
 			break
 		}
@@ -734,29 +740,27 @@ func WarnMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec(`
-	UPDATE coterie
-	SET warningDetails = jsonb_set(
-			warningDetails,
-			array[$1],
-			jsonb_build_object('reason', $2::text, 'time', $3::timestamp)
-	)
-	WHERE name = $4`,
-		member.UserID, reason, time.Now().Format(time.RFC3339), coterieName)
-
+	_, err = db.Exec(r.Context(), `
+			UPDATE coterie
+			SET warningDetails = jsonb_set(
+					COALESCE(warningDetails, '{}'::jsonb),
+					array[$1::text],
+					jsonb_build_object('reason', $2::text, 'time', $3::timestamp)
+			)
+			WHERE name = $4`,
+		member.ID, reason, time.Now().Format(time.RFC3339), coterieName)
 	if err != nil {
 		http.Error(w, "Failed to warn member", http.StatusInternalServerError)
 		return
 	}
 
-	// Send response
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": fmt.Sprintf("Member %s successfully warned for reason: %s", membername, reason),
 	})
 }
 
 func PromoteMember(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
@@ -765,324 +769,375 @@ func PromoteMember(w http.ResponseWriter, r *http.Request) {
 	coterieName := r.URL.Query().Get("CoterieName")
 	role := r.URL.Query().Get("role")
 	memberName := r.URL.Query().Get("username")
-	encryptedUserID := r.Header.Get("X-userID")
 	action := r.URL.Query().Get("action")
 
-	// Decrypt user ID
-	promoterIDStr, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	promoterID, err := uuid.Parse(promoterIDStr)
+	promoterID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Invalid PromoterID", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	var memberID string
-	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, memberName).Scan(&memberID)
+	var memberID uuid.UUID
+	err = db.QueryRow(r.Context(), `SELECT id FROM users WHERE username = $1`, memberName).Scan(&memberID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Member not found", http.StatusNotFound)
-			return
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	var coterieID, ownerID string
-	var rolesJson sql.NullString
-	err = db.QueryRow(`SELECT id, owner, roles FROM coterie WHERE name = $1`, coterieName).Scan(&coterieID, &ownerID, &rolesJson)
+	var coterieID uuid.UUID
+	var ownerID uuid.UUID
+	var rolesJson pgtype.Text
+	err = db.QueryRow(r.Context(),
+		`SELECT id, owner, roles FROM coterie WHERE name = $1`,
+		coterieName,
+	).Scan(&coterieID, &ownerID, &rolesJson)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			http.Error(w, "Coterie not found", http.StatusNotFound)
-			return
+		} else {
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
 		}
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	if ownerID != promoterID.String() {
-		http.Error(w, "Only the owner can promote or demote members", http.StatusUnauthorized)
+	promoterUUID, err := uuid.Parse(promoterID)
+	if err != nil {
+		http.Error(w, "Invalid promoter ID", http.StatusBadRequest)
+		return
+	}
+	if ownerID != promoterUUID {
+		http.Error(w, "Only the owner can promote/demote", http.StatusUnauthorized)
 		return
 	}
 
-	if role != "Moderator" && role != "Owner" && role != "Admin" {
-		http.Error(w, "Invalid role. Must be 'Moderator', 'Admin', or 'Owner'", http.StatusBadRequest)
+	validRoles := map[string]bool{"Moderator": true, "Admin": true, "Owner": true}
+	if !validRoles[role] {
+		http.Error(w, "Invalid role", http.StatusBadRequest)
 		return
 	}
 
 	if action != "promote" && action != "demote" {
-		http.Error(w, "Invalid action. Must be 'promote' or 'demote'", http.StatusBadRequest)
+		http.Error(w, "Invalid action", http.StatusBadRequest)
 		return
 	}
 
-	var updateQuery string
-	if action == "promote" {
-		updateQuery = `UPDATE coterie
-							SET roles = jsonb_set(
-								COALESCE(roles, '{}'::jsonb),
-								'{` + role + `}',
-								COALESCE(roles->'` + role + `', '[]'::jsonb) || to_jsonb($1::text)
-							)
-							WHERE id = $2`
-	} else {
-		updateQuery = `UPDATE coterie
-							SET roles = jsonb_set(
-								COALESCE(roles, '{}'::jsonb),
-								'{` + role + `}',
-								roles->'` + role + `' - to_jsonb($1::text)
-							)
-							WHERE id = $2`
-	}
+	updateQuery := `UPDATE coterie SET roles = jsonb_set(
+			COALESCE(roles, '{}'::jsonb),
+			$1,
+			CASE WHEN $2 = 'promote' 
+					THEN COALESCE(roles->$3, '[]'::jsonb) || to_jsonb($4::text)
+					ELSE COALESCE(roles->$3, '[]'::jsonb) - to_jsonb($4::text)
+			END
+	) WHERE id = $5`
 
-	_, err = db.Exec(updateQuery, memberID, coterieID)
+	path := fmt.Sprintf(`{%s}`, strings.ToLower(role))
+	_, err = db.Exec(r.Context(), updateQuery,
+		path,
+		action,
+		role,
+		memberID,
+		coterieID,
+	)
 	if err != nil {
-		http.Error(w, "Failed to update coterie", http.StatusInternalServerError)
+		http.Error(w, "Failed to update roles", http.StatusInternalServerError)
 		return
 	}
 
-	response := map[string]string{
-		"message": fmt.Sprintf("Member %s successfully %sd to %s", memberName, action, role),
-	}
 	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(response)
-	if err != nil {
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf("Member %s %sd to %s", memberName, action, role),
+	})
 }
 
 func RemovePostFromCoterie(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	coterieName := r.URL.Query().Get("coterie")
-	postIDStr := r.URL.Query().Get("postID")
-	encryptedUserID := r.Header.Get("X-userID")
-
-	modIDStr, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+	postID := r.URL.Query().Get("postID")
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	modID, err := uuid.Parse(modIDStr)
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Invalid moderator ID", http.StatusBadRequest)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Fetch coterie details
-	var coterieID, ownerID string
-	err = db.QueryRow(`SELECT id, owner FROM coterie WHERE name = $1`, coterieName).Scan(&coterieID, &ownerID)
+	var coterieID uuid.UUID
+	var ownerID uuid.UUID
+	err = db.QueryRow(r.Context(),
+		`SELECT id, owner FROM coterie WHERE name = $1`,
+		coterieName,
+	).Scan(&coterieID, &ownerID)
 	if err != nil {
-		http.Error(w, "Coterie not found", http.StatusNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Coterie not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	// Fetch post details
 	var postCoterie string
-	err = db.QueryRow(`SELECT coterie FROM post WHERE id = $1`, postIDStr).Scan(&postCoterie)
+	err = db.QueryRow(r.Context(),
+		`SELECT coterie FROM post WHERE id = $1`,
+		postID,
+	).Scan(&postCoterie)
 	if err != nil {
 		http.Error(w, "Post not found", http.StatusNotFound)
 		return
 	}
 
 	if postCoterie != coterieName {
-		http.Error(w, "Post does not belong to the specified coterie", http.StatusBadRequest)
+		http.Error(w, "Post doesn't belong to coterie", http.StatusBadRequest)
 		return
 	}
 
-	// Check if the user is an authorized moderator or owner
-	var isAuthorized bool
-	if modID.String() == ownerID {
-		isAuthorized = true
-	} else {
-		var roleJson string
-		err = db.QueryRow(`SELECT roles FROM coterie WHERE id = $1`, coterieID).Scan(&roleJson)
+	modUUID, err := uuid.Parse(modID)
+	if err != nil {
+		http.Error(w, "Invalid moderator ID", http.StatusBadRequest)
+		return
+	}
+	isAuthorized := modUUID == ownerID
+	if !isAuthorized {
+		var rolesJson pgtype.Text
+		err := db.QueryRow(r.Context(),
+			`SELECT roles FROM coterie WHERE id = $1`,
+			coterieID,
+		).Scan(&rolesJson)
 		if err != nil {
-			http.Error(w, "Error fetching roles", http.StatusInternalServerError)
+			http.Error(w, "Error checking roles", http.StatusInternalServerError)
 			return
 		}
 
-		// Check for moderator role
-		var roles map[string][]string
-		json.Unmarshal([]byte(roleJson), &roles)
-		if contains(roles["moderators"], modID.String()) || contains(roles["admins"], modID.String()) {
-			isAuthorized = true
+		var roles map[string][]uuid.UUID
+		if rolesJson.Status == pgtype.Present {
+			json.Unmarshal([]byte(rolesJson.String), &roles)
+			modUUID, err := uuid.Parse(modID)
+			if err != nil {
+				http.Error(w, "Invalid moderator ID", http.StatusBadRequest)
+				return
+			}
+			isAuthorized = containsUUID(roles["moderators"], modUUID) ||
+				containsUUID(roles["admins"], modUUID)
 		}
 	}
 
 	if !isAuthorized {
-		http.Error(w, "Unauthorized. Only owners, admins, or moderators can remove posts.", http.StatusUnauthorized)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	// Remove the post from the posts table
-	_, err = db.Exec(`DELETE FROM post WHERE id = $1`, postIDStr)
+	_, err = db.Exec(r.Context(),
+		`DELETE FROM post WHERE id = $1`,
+		postID,
+	)
 	if err != nil {
-		http.Error(w, "Error removing post", http.StatusInternalServerError)
+		http.Error(w, "Failed to delete post", http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"message": "Post removed successfully"}`))
+	json.NewEncoder(w).Encode(map[string]string{"message": "Post removed"})
 }
 
 func BanUser(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	// Get pgx connection pool from context
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	coterieName := r.URL.Query().Get("CoterieName")
 	username := r.URL.Query().Get("username")
-	encryptedUserID := r.Header.Get("X-userID")
 
-	// Decrypt the moderator ID
-	modID, err := middlewares.DecryptAES(encryptedUserID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
+	// Get moderator ID from context
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	// Get the moderator ID
-	var modIDStr string
-	err = db.QueryRow(`SELECT id FROM users WHERE id = $1`, modID).Scan(&modIDStr)
+	modID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
-		http.Error(w, "Moderator not found", http.StatusNotFound)
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	// Get the user ID to ban
-	var userID string
-	err = db.QueryRow(`SELECT id FROM users WHERE username = $1`, username).Scan(&userID)
+	// Verify moderator exists (redundant check from original code)
+	var modIDDB uuid.UUID
+	err = db.QueryRow(r.Context(),
+		`SELECT id FROM users WHERE id = $1`,
+		modID,
+	).Scan(&modIDDB)
 	if err != nil {
-		http.Error(w, "User not found", http.StatusNotFound)
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "Moderator not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+		}
 		return
 	}
 
-	// Check if the user is a member of the coterie
+	// Get user to ban
+	var userID uuid.UUID
+	err = db.QueryRow(r.Context(),
+		`SELECT id FROM users WHERE username = $1`,
+		username,
+	).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "User not found", http.StatusNotFound)
+		} else {
+			http.Error(w, "Database error", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Check membership
 	var isMember bool
-	err = db.QueryRow(`SELECT EXISTS(SELECT 1 FROM coterie WHERE name = $1 AND $2 = ANY(members))`, coterieName, userID).Scan(&isMember)
+	err = db.QueryRow(r.Context(),
+		`SELECT EXISTS(
+					SELECT 1 FROM coterie 
+					WHERE name = $1 AND $2 = ANY(members)
+			)`,
+		coterieName, userID,
+	).Scan(&isMember)
 	if err != nil || !isMember {
-		http.Error(w, "User is not a member of this coterie", http.StatusBadRequest)
+		http.Error(w, "User is not a coterie member", http.StatusBadRequest)
 		return
 	}
 
-	// Add user to bannedMembers array in coterie table
-	_, err = db.Exec(`UPDATE coterie SET bannedmembers = array_append(bannedmembers, $1) WHERE name = $2`, userID, coterieName)
+	// Use transaction for atomic updates
+	tx, err := db.Begin(r.Context())
 	if err != nil {
-		http.Error(w, "Error banning user from coterie", http.StatusInternalServerError)
+		http.Error(w, "Transaction failed", http.StatusInternalServerError)
 		return
 	}
+	defer tx.Rollback(r.Context())
 
-	// Remove user from members array in coterie table
-	_, err = db.Exec(`UPDATE coterie SET members = array_remove(members, $1) WHERE name = $2`, userID, coterieName)
+	// Update coterie arrays
+	_, err = tx.Exec(r.Context(),
+		`UPDATE coterie 
+        SET bannedmembers = array_append(bannedmembers, $1),
+            members = array_remove(members, $1)
+        WHERE name = $2`,
+		userID, coterieName,
+	)
 	if err != nil {
-		http.Error(w, "Error removing user from coterie members", http.StatusInternalServerError)
+		http.Error(w, "Failed to update coterie", http.StatusInternalServerError)
 		return
 	}
 
-	// Mark the user as banned in the users table
-	_, err = db.Exec(`UPDATE users SET isbanned = true WHERE id = $1`, userID)
 	if err != nil {
-		http.Error(w, "Error banning user", http.StatusInternalServerError)
+		http.Error(w, "Failed to ban user", http.StatusInternalServerError)
 		return
 	}
 
-	// Respond to the client
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"message": "User '%s' has been banned from coterie '%s' by moderator '%s'"}`, username, coterieName, modIDStr)
+	// Commit transaction
+	if err := tx.Commit(r.Context()); err != nil {
+		http.Error(w, "Commit failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Respond with UUID string representation
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": fmt.Sprintf(
+			"User '%s' banned from '%s' by moderator '%s'",
+			username,
+			coterieName,
+			modID,
+		),
+	})
 }
 
 func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
-	// Retrieve the PostgreSQL database connection from the context
-	db, ok := r.Context().Value("db").(*sql.DB)
-	if !ok {
-		http.Error(w, "Database connection not available", http.StatusInternalServerError)
-		return
-	}
-
-	// Retrieve the username from the URL parameter
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	username := chi.URLParam(r, "userParam")
-
-	// Retrieve the user ID from the request header
 	userIDHeader := r.Header.Get("X-userID")
 
-	var userID string
+	var userID uuid.UUID
 	var err error
 
-	// If the user ID is passed in the header, use it
 	if userIDHeader != "" {
-		userID = userIDHeader
-	} else {
-		// Otherwise, treat the parameter as a username and fetch the user ID
-		query := `SELECT id FROM users WHERE username = $1`
-		row := db.QueryRowContext(r.Context(), query, username)
-
-		err := row.Scan(&userID)
+		userID, err = uuid.Parse(userIDHeader)
 		if err != nil {
-			if err == sql.ErrNoRows {
-				http.Error(w, "User not found", http.StatusNotFound)
-			} else {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-			}
+			http.Error(w, "Invalid user ID", http.StatusBadRequest)
+			return
+		}
+	} else {
+		err = db.QueryRow(r.Context(),
+			`SELECT id FROM users WHERE username = $1`,
+			username,
+		).Scan(&userID)
+		if err != nil {
+			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
 	}
 
-	// Fetch the coteries by user ID
-	query := `
-		SELECT c.id, c.name, c.avatar, c.banner, c."isVerified", c."isChatAllowed", c."isOrganisation", c.roles, c.members, c.owner
-		FROM coterie c
-		WHERE $1 = ANY(c.members)`
-	rows, err := db.QueryContext(r.Context(), query, userID)
+	rows, err := db.Query(r.Context(),
+		`SELECT id, name, avatar, banner, isVerified, 
+							isChatAllowed, isOrganisation, roles, members, owner
+			 FROM coterie
+			 WHERE $1 = ANY(members)`,
+		userID,
+	)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	var coteries []map[string]interface{}
+	coteries := make([]map[string]interface{}, 0)
 	for rows.Next() {
 		var coterie types.Coterie
-		var rolesJSON []byte
+		var rolesJson []byte
+		var members []uuid.UUID
 
-		err := rows.Scan(&coterie.ID, &coterie.Name, &coterie.Avatar, &coterie.Banner, &coterie.IsVerified, &coterie.IsChatAllowed, &coterie.IsOrganisation, &rolesJSON, pq.Array(&coterie.Members), &coterie.Owner)
+		err := rows.Scan(
+			&coterie.ID,
+			&coterie.Name,
+			&coterie.Avatar,
+			&coterie.Banner,
+			&coterie.IsVerified,
+			&coterie.IsChatAllowed,
+			&coterie.IsOrganisation,
+			&rolesJson,
+			pq.Array(&members),
+			&coterie.Owner,
+		)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Scan error", http.StatusInternalServerError)
 			return
 		}
 
-		// Check if rolesJSON is not empty and unmarshal it
-		var roles map[string][]string
-		if len(rolesJSON) > 0 {
-			err = json.Unmarshal(rolesJSON, &roles)
-			if err != nil {
-				http.Error(w, "Failed to unmarshal roles", http.StatusInternalServerError)
-				return
-			}
-		} else {
-			// Default empty map if roles are not provided
-			roles = make(map[string][]string)
+		roles := make(map[string][]uuid.UUID)
+		if len(rolesJson) > 0 {
+			json.Unmarshal(rolesJson, &roles)
 		}
-		coterie.Roles = roles
 
-		// Handle nullable fields like banner
-		isOwner := userID == coterie.Owner
-		isAdmin := contains(coterie.Roles["admins"], userID)
-		isModerator := contains(coterie.Roles["moderators"], userID)
-
-		// Get post count
 		var postCount int
-		postCountQuery := `SELECT COUNT(*) FROM post WHERE coterie = $1`
-		err = db.QueryRowContext(r.Context(), postCountQuery, coterie.Name).Scan(&postCount)
+		err = db.QueryRow(r.Context(),
+			`SELECT COUNT(*) FROM post WHERE coterie = $1`,
+			coterie.Name,
+		).Scan(&postCount)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Post count error", http.StatusInternalServerError)
 			return
 		}
 
-		// Append coterie info
 		coteries = append(coteries, map[string]interface{}{
 			"name":           coterie.Name,
 			"avatar":         coterie.Avatar,
@@ -1090,24 +1145,26 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 			"isVerified":     coterie.IsVerified,
 			"isChatAllowed":  coterie.IsChatAllowed,
 			"PostsCount":     postCount,
-			"isOwner":        isOwner,
+			"isOwner":        userID == uuid.MustParse(coterie.Owner),
 			"isOrganisation": coterie.IsOrganisation,
-			"isAdmin":        isAdmin,
-			"TotalMembers":   len(coterie.Members),
-			"isModerator":    isModerator,
+			"isAdmin":        containsUUID(roles["admins"], userID),
+			"TotalMembers":   len(members),
+			"isModerator":    containsUUID(roles["moderators"], userID),
 		})
 	}
 
-	if err := rows.Err(); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Return the list of coteries as JSON
 	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(coteries); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(coteries)
+}
+
+// Helper function
+func containsUUID(slice []uuid.UUID, item uuid.UUID) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
 	}
+	return false
 }
 
 // Helper function to check if userID exists in a given list
@@ -1122,14 +1179,14 @@ func contains(list []string, userID string) bool {
 
 func CoterieRoutes(r chi.Router) {
 	r.Get("/coterie/@all", GetAllCoterie)
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/membership", (middlewares.DiscordErrorReport(http.HandlerFunc(CoterieMembership)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/set-warning-limit", (middlewares.DiscordErrorReport(http.HandlerFunc(SetWarningLimit)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/membership", CoterieMembership)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/set-warning-limit", SetWarningLimit)
 	r.Get("/coterie/{name}", GetCoterieByName)
 	r.Get("/user/{userParam}/coteries", GetCoteriesByUserID)
-	r.With(RateLimit(5, 5*time.Minute)).Delete("/coterie/remove-post", (middlewares.DiscordErrorReport(http.HandlerFunc(RemovePostFromCoterie)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/update", (middlewares.DiscordErrorReport(http.HandlerFunc(UpdateCoterie)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/promote", (middlewares.DiscordErrorReport(http.HandlerFunc(PromoteMember)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/ban", (middlewares.DiscordErrorReport(http.HandlerFunc(BanUser)).ServeHTTP))
-	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/warn", (middlewares.DiscordErrorReport(http.HandlerFunc(WarnMember)).ServeHTTP))
-	r.With(RateLimit(1, 20*time.Minute)).Post("/coterie/new", (middlewares.DiscordErrorReport(http.HandlerFunc(AddNewCoterie)).ServeHTTP))
+	r.With(RateLimit(5, 5*time.Minute)).Delete("/coterie/remove-post", RemovePostFromCoterie)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/update", UpdateCoterie)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/promote", PromoteMember)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/ban", BanUser)
+	r.With(RateLimit(5, 5*time.Minute)).Post("/coterie/warn", WarnMember)
+	r.With(RateLimit(1, 20*time.Minute)).Post("/coterie/new", AddNewCoterie)
 }
