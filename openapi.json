@@ -1,0 +1,22 @@
+{
+			"openapi": "3.0.0",
+			"info": {
+				"title": "NetSocial API",
+				"description": "API documentation for NetSocial",
+				"version": "4.0.0",
+				"contact": {
+					"name": "Support Team",
+					"email": "support@netsocial.app"
+				}
+			},
+			"servers": [
+				{
+					"url": "https://api.netsocial.app",
+					"description": "Production Server"
+				},
+				{
+					"url": "http://localhost:8080",
+					"description": "Local Development Server"
+				}
+			]
+		}

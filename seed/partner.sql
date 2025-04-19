@@ -1,0 +1,9 @@
+CREATE TABLE partner ( 
+    id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    banner TEXT,
+    logo TEXT NOT NULL,
+    createdat TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    title TEXT NOT NULL,
+    text TEXT NOT NULL,
+    link TEXT NOT NULL
+);
