@@ -101,6 +101,10 @@ func setupRouter(db *database.Database) *chi.Mux {
 				"name":       "GNU Affero General Public License v3.0",
 				"learn more": "https://opensource.org/license/gpl-3-0",
 			},
+			"support": map[string]string{
+				"email":   "support@netsocial.app",
+				"discord": "https://discord.com/invite/DcUX2pMta4",
+			},
 		})
 	})
 
