@@ -19,13 +19,11 @@ import (
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/lib/pq"
-	"github.com/resend/resend-go/v2"
 )
 
 var err error
 
 func deleteAccount(w http.ResponseWriter, r *http.Request) {
-
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
 		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
@@ -37,32 +35,26 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Retrieve the pgxpool.Pool from the context
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var user types.User
-	// Query to get the user's details
 	err = dbPool.QueryRow(r.Context(), `SELECT id, email FROM users WHERE id = $1`, userId).Scan(&user.ID, &user.Email)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
 		return
 	}
 
-	// Send a goodbye email to the user
-	err = sendGoodbyeEmail(user.Email)
+	err = SendGoodbyeEmail(user.Email)
 	if err != nil {
 		http.Error(w, "Failed to send goodbye email", http.StatusInternalServerError)
 		return
 	}
 
-	// Start transaction for deletion operations
 	tx, err := dbPool.Begin(r.Context())
 	if err != nil {
 		http.Error(w, "Failed to start transaction", http.StatusInternalServerError)
 		return
 	}
-
-	// Ensure to commit or rollback the transaction based on outcome
 	defer func() {
 		if err != nil {
 			tx.Rollback(r.Context())
@@ -71,45 +63,36 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Delete the user
 	_, err = tx.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
-	// Delete all posts authored by the user
 	_, err = tx.Exec(r.Context(), `DELETE FROM post WHERE author = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete posts", http.StatusInternalServerError)
 		return
 	}
 
-	// Delete all coteries owned by the user
 	_, err = tx.Exec(r.Context(), `DELETE FROM coterie WHERE owner = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete coteries", http.StatusInternalServerError)
 		return
 	}
 
-	// Send a successful response
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"message": "User, their posts, and coteries deleted successfully"})
 }
 
-func sendGoodbyeEmail(email string) error {
-	var types types.Config
-	apiKey := types.ResendKey
-
-	client := resend.NewClient(apiKey)
-	params := &resend.SendEmailRequest{
+func SendGoodbyeEmail(email string) error {
+	emailData := middlewares.EmailData{
 		From:    "Netsocial <goodbye@netsocial.app>",
-		To:      []string{email},
+		To:      email,
 		Subject: "Goodbye from Netsocial",
 		Text:    "We're sorry to see you go. If you change your mind, you can always come back and start anew journey. [Rejoin Netsocial](https://netsocial.app/signup).",
 	}
-	_, err := client.Emails.Send(params)
-	return err
+	return middlewares.SendEmail(emailData)
 }
 
 func GetUserByName(w http.ResponseWriter, r *http.Request) {

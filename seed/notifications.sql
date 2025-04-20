@@ -9,5 +9,3 @@ CREATE TABLE notifications (
     isRead BOOLEAN DEFAULT FALSE,
     createdAt TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
-
-CREATE INDEX CONCURRENTLY IF NOT EXISTS notifications_userid_idx ON notifications(userId);

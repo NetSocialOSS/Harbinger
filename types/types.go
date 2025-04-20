@@ -275,6 +275,7 @@ type Config struct {
 	ApiVersion       string `yaml:"api_version" default:"4.0.0"`
 	CsrfKey          string `yaml:"CsrfKey"`
 	Algor            Algor  `yaml:"algor"`
+	SMTP             SMTP   `yaml:"smtp"`
 }
 
 type Algor struct {
@@ -292,4 +293,11 @@ type ModelResponse struct {
 		Name  string `json:"name"`
 		Model string `json:"model"`
 	} `json:"models"`
+}
+
+type SMTP struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"`
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
 }

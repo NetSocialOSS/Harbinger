@@ -46,8 +46,6 @@ require (
 	google.golang.org/protobuf v1.33.0 // indirect
 )
 
-require github.com/resend/resend-go/v2 v2.10.0 // direct
-
 require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/uuid v1.6.0 // direct

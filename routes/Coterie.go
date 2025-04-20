@@ -1088,8 +1088,8 @@ func GetCoteriesByUserID(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(r.Context(),
-		`SELECT id, name, avatar, banner, isVerified, 
-							isChatAllowed, isOrganisation, roles, members, owner
+		`SELECT id, name, avatar, banner, isverified, 
+							ischatallowed, isorganisation, roles, members, owner
 			 FROM coterie
 			 WHERE $1 = ANY(members)`,
 		userID,

@@ -20,14 +20,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v4"
 	"github.com/jackc/pgx/v4/pgxpool"
-	"github.com/resend/resend-go/v2"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var configuration types.Config
 
 var jwtSecret = configuration.JwtSecret
-var apiKey = configuration.ResendKey
 
 func generateJWT(userID uuid.UUID) (string, error) {
 	claims := jwt.MapClaims{
@@ -116,16 +114,13 @@ func FetchDisposableDomains() (map[string]bool, error) {
 }
 
 func sendWelcomeEmail(email string) error {
-
-	client := resend.NewClient(apiKey)
-	params := &resend.SendEmailRequest{
+	emailData := middlewares.EmailData{
 		From:    "Netsocial <welcome@netsocial.app>",
-		To:      []string{email},
+		To:      email,
 		Subject: "Welcome to Netsocial!",
 		Text:    "Hey, welcome to Netsocial! Let's start by making your first post. [Post Now!](https://netsocial.app/post/new)",
 	}
-	_, err := client.Emails.Send(params)
-	return err
+	return middlewares.SendEmail(emailData)
 }
 
 func UserSignup(w http.ResponseWriter, r *http.Request) {
@@ -204,13 +199,6 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		http.Error(w, "Failed to create user", http.StatusInternalServerError)
-		return
-	}
-
-	// Send welcome email
-	err = sendWelcomeEmail(email)
-	if err != nil {
-		http.Error(w, "Failed to send welcome email", http.StatusInternalServerError)
 		return
 	}
 
@@ -305,6 +293,8 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 	_, err = db.Exec(r.Context(), insertSessionQuery, sessionID, user.ID, device, expirationTime, token, "harbinger-generated")
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		errorMessage := fmt.Sprintf("Failed to create session: %v", err)
+		log.Println(errorMessage)
 		return
 	}
 
@@ -669,19 +659,16 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 func sendPasswordResetEmail(email, tempPassword string) error {
-	client := resend.NewClient(apiKey)
 
 	// Construct the email body
-	params := &resend.SendEmailRequest{
+	emailData := middlewares.EmailData{
 		From:    "Netsocial <noreply@netsocial.app>",
-		To:      []string{email},
+		To:      email,
 		Subject: "Password Reset for Your Netsocial Account",
 		Html:    fmt.Sprintf("<p>Your temporary password is: <strong>%s</strong></p><p>Please log in and change your password immediately. Do note this will expire in 15mins</p>", tempPassword),
 	}
 
-	// Send the email using the Resend service
-	_, err := client.Emails.Send(params)
-	return err
+	return middlewares.SendEmail(emailData)
 }
 
 func Auth(r chi.Router) {

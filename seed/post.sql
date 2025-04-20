@@ -12,7 +12,3 @@ CREATE TABLE post (
     hearts TEXT[] DEFAULT '{}'::TEXT[],
     comments JSONB DEFAULT NULL
 );
-
-CREATE INDEX CONCURRENTLY IF NOT EXISTS post_author_idx ON post(author);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS post_coterie_idx ON post(coterie);
-CREATE INDEX CONCURRENTLY IF NOT EXISTS post_createdat_idx ON post(createdAt);
