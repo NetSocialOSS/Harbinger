@@ -152,7 +152,7 @@ func setupRouter(db *database.Database) *chi.Mux {
 				<body>
 				<script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
 				<elements-api
-					apiDescriptionUrl="https://spider.infinitybots.gg/openapi"
+					apiDescriptionUrl="/openapi"
 					layout="sidebar"
 					logo="https://netsocial.app/assets/img/logo.png"
 				>
