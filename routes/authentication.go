@@ -469,7 +469,7 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		log.Println(err)
 
-		http.Error(w, "Failed to retrieve user information", http.StatusInternalServerError)
+		http.Error(w, "Failed to retrieve user information"+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
