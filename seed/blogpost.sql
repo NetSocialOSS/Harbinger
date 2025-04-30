@@ -1,9 +1,9 @@
 CREATE TABLE blogpost (
-    id UUID PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
-    slug TEXT UNIQUE NOT NULL,
-    title TEXT NOT NULL, 
-    date TEXT NOT NULL,
-    authorId UUID NOT NULL REFERENCES users(id),
-    overview TEXT,
-    content JSONB NOT NULL
+    id uuid PRIMARY KEY NOT NULL DEFAULT gen_random_uuid(),
+    slug text UNIQUE NOT NULL,
+    title text NOT NULL,
+    date text NOT NULL,
+    authorid uuid NOT NULL REFERENCES users(id),
+    overview text,
+    content jsonb NOT NULL
 );

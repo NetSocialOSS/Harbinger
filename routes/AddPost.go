@@ -33,7 +33,7 @@ func generateUniqueID(db *pgxpool.Pool) (string, error) {
 
 		// Check if the ID already exists in PostgreSQL
 		var count int
-		err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM post WHERE id = $1", id).Scan(&count)
+		err := db.QueryRow(context.Background(), "select count(*) from post where id = $1", id).Scan(&count)
 		if err != nil {
 			return "", err
 		}
@@ -110,7 +110,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the user is banned
 	var isBanned bool
-	err = db.QueryRow(context.Background(), "SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
+	err = db.QueryRow(context.Background(), "select isbanned from users where id = $1", userID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return
@@ -124,7 +124,7 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	// Check if the user is a member of the coterie (if provided)
 	if coterieName != "" {
 		var members []string
-		err = db.QueryRow(context.Background(), "SELECT members FROM coterie WHERE name = $1", coterieName).Scan(pq.Array(&members))
+		err = db.QueryRow(context.Background(), "select members from coterie where name = $1", coterieName).Scan(pq.Array(&members))
 		if err != nil {
 			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
 			return
@@ -208,8 +208,8 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 
 	// Insert new post into the database
 	query := `
-	INSERT INTO post (id, title, content, author, isIndexed, coterie, scheduledfor, image, poll, hearts)
-	VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	insert into post (id, title, content, author, isindexed, coterie, scheduledfor, image, poll, hearts)
+	values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 `
 	_, err = db.Exec(context.Background(), query, postID, title, content, userID, indexing, coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}))
 	if err != nil {

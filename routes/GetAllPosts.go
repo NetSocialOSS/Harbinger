@@ -65,10 +65,10 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
-			FROM post
-			WHERE isIndexed = true
-			ORDER BY createdat DESC`
+	query := `select id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
+			from post
+			where isIndexed = true
+			order by createdat desc`
 
 	rows, err := db.Query(ctx, query)
 	if err != nil {
@@ -136,8 +136,8 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 		if cachedAuthor != nil {
 			author = cachedAuthor.Value().(types.Author)
 		} else {
-			authorQuery := `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner
-				FROM users WHERE id = $1`
+			authorQuery := `select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator, ispartner
+				from users where id = $1`
 			err := db.QueryRow(ctx, authorQuery, post.Author).Scan(
 				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
 				&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
@@ -180,7 +180,7 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			cachedauthor := userCache.Get(userID.String())
 			if cachedauthor == nil {
 
-				err := db.QueryRow(ctx, `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator, isPartner FROM users WHERE id = $1`, userID.String()).Scan(
+				err := db.QueryRow(ctx, `select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator, ispartner from users where id = $1`, userID.String()).Scan(
 					&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
 					&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
 				)

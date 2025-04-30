@@ -45,7 +45,7 @@ func DeletePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `DELETE FROM Post WHERE id = $1 AND author = $2`
+	query := `delete from post where id = $1 and author = $2`
 
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()

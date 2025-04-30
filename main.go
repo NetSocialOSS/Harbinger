@@ -36,7 +36,11 @@ func main() {
 
 	// Connect to database and defer disconnect
 	var db *database.Database
-	db, _ = database.Connect(PsqlURL, RedisURL, "seed")
+	var err error
+	db, err = database.Connect(PsqlURL, RedisURL, "seed", "backups")
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
 	defer database.Disconnect(db)
 
 	// Setup router and server

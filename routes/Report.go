@@ -16,7 +16,6 @@ import (
 )
 
 var config types.Config
-
 var webhookURL string
 
 // getReporterUsername fetches the reporter's username from the database
@@ -124,7 +123,7 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := "SELECT id FROM Post WHERE id = $1"
+	query := "SELECT id FROM post WHERE id = $1"
 	var postID string
 	err = db.QueryRow(r.Context(), query, reportedPostID).Scan(&postID)
 	if err != nil {
@@ -173,7 +172,7 @@ func ReportPost(w http.ResponseWriter, r *http.Request) {
 
 // ReportCoterie handles reporting a coterie
 func ReportCoterie(w http.ResponseWriter, r *http.Request) {
-	coterieName := r.URL.Query().Get("Coterie")
+	coterieName := r.URL.Query().Get("coterie")
 	reason := r.URL.Query().Get("reason")
 
 	encrypteduserId := r.Header.Get("X-userID")

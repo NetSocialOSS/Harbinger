@@ -43,7 +43,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner or moderator
 	var modUser types.User
-	err = db.QueryRow(context.Background(), "SELECT id, isowner, ismoderator, isdeveloper FROM users WHERE id = $1", modID).Scan(&modUser.ID, &modUser.IsOwner, &modUser.IsModerator, &modUser.IsDeveloper)
+	err = db.QueryRow(context.Background(), "select id, isowner, ismoderator, isdeveloper from users where id = $1", modID).Scan(&modUser.ID, &modUser.IsOwner, &modUser.IsModerator, &modUser.IsDeveloper)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -57,7 +57,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	switch entity {
 	case "user":
 		var user types.User
-		err := db.QueryRow(context.Background(), "SELECT id FROM users WHERE username = $1", username).Scan(&user.ID)
+		err := db.QueryRow(context.Background(), "select id from users where username = $1", username).Scan(&user.ID)
 		if err != nil {
 			http.Error(w, `{"error": "User not found"}`, http.StatusNotFound)
 			return
@@ -69,7 +69,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		query := "UPDATE users SET " + update + " WHERE username = $1"
+		query := "update users set " + update + " where username = $1"
 		_, err = db.Exec(context.Background(), query, username)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update user badges"}`, http.StatusInternalServerError)
@@ -84,7 +84,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 	case "coterie":
 		coterieName := r.Header.Get("X-username")
 		var coterie types.Coterie
-		err := db.QueryRow(context.Background(), "SELECT id FROM coterie WHERE name = $1", coterieName).Scan(&coterie.ID)
+		err := db.QueryRow(context.Background(), "select id from coterie where name = $1", coterieName).Scan(&coterie.ID)
 		if err != nil {
 			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
 			return
@@ -96,7 +96,7 @@ func ManageBadge(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		query := "UPDATE coterie SET " + update + " WHERE name = $1"
+		query := "update coterie set " + update + " where name = $1"
 		_, err = db.Exec(context.Background(), query, coterieName)
 		if err != nil {
 			http.Error(w, `{"error": "Failed to update coterie badges"}`, http.StatusInternalServerError)
@@ -153,15 +153,15 @@ func handleBadgeUpdateForCoterie(badge string, action string) string {
 	switch badge {
 	case "organisation":
 		if action == "add" {
-			return "\"isOrganisation\" = true"
+			return `"isOrganisation" = true`
 		} else if action == "remove" {
-			return "\"isOrganisation\" = false"
+			return `"isOrganisation" = false`
 		}
 	case "verified":
 		if action == "add" {
-			return "\"isVerified\" = true"
+			return `"isVerified" = true`
 		} else if action == "remove" {
-			return "\"isVerified\" = false"
+			return `"isVerified" = false`
 		}
 	}
 	return ""
@@ -190,7 +190,7 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "select isowner, ismoderator from users where id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -203,7 +203,7 @@ func DeletePostAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the post from the database
-	result, err := db.Exec(context.Background(), "DELETE FROM post WHERE id = $1", postID)
+	result, err := db.Exec(context.Background(), "delete from post where id = $1", postID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete post"}`, http.StatusInternalServerError)
 		return
@@ -250,7 +250,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "select isowner, ismoderator from users where id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -263,7 +263,7 @@ func DeleteCoterieAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Delete the coterie from the database
-	result, err := db.Exec(context.Background(), "DELETE FROM coterie WHERE name = $1", coterieName)
+	result, err := db.Exec(context.Background(), "delete from coterie where name = $1", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to delete coterie"}`, http.StatusInternalServerError)
 		return
@@ -304,7 +304,7 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the mod is an owner or moderator
 	var isOwner, isModerator bool
-	err = db.QueryRow(context.Background(), "SELECT isowner, ismoderator FROM users WHERE id = $1", modID).Scan(&isOwner, &isModerator)
+	err = db.QueryRow(context.Background(), "select isowner, ismoderator from users where id = $1", modID).Scan(&isOwner, &isModerator)
 	if err != nil {
 		http.Error(w, `{"error": "Moderator not found"}`, http.StatusInternalServerError)
 		return
@@ -320,9 +320,9 @@ func ManageUser(w http.ResponseWriter, r *http.Request) {
 	var query string
 	switch action {
 	case "ban":
-		query = "UPDATE users SET isbanned = true WHERE username = $1"
+		query = "update users set isbanned = true where username = $1"
 	case "unban":
-		query = "UPDATE users SET isbanned = false WHERE username = $1"
+		query = "update users set isbanned = false where username = $1"
 	default:
 		http.Error(w, `{"error": "Invalid action"}`, http.StatusBadRequest)
 		return

@@ -18,7 +18,7 @@ func getCount(w http.ResponseWriter, r *http.Request, tableName string, fieldNam
 		return
 	}
 
-	query := "SELECT COUNT(*) FROM \"" + tableName + "\""
+	query := "SELECT COUNT(*) FROM " + tableName
 	var total int
 	if err := db.QueryRow(context.Background(), query).Scan(&total); err != nil {
 		http.Error(w, "Error counting records", http.StatusInternalServerError)

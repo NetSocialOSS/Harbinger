@@ -33,7 +33,7 @@ func GetAllNotifications(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := dbPool.Query(r.Context(),
-		"SELECT id, type, content, link, isRead, createdAt FROM notifications WHERE userId = $1 ORDER BY createdAt DESC",
+		"SELECT id, type, content, link, isread, createdat FROM notifications WHERE userid = $1 ORDER BY createdat DESC",
 		userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "Error fetching notifications: %v"}`, err), http.StatusInternalServerError)
@@ -55,8 +55,8 @@ func GetAllNotifications(w http.ResponseWriter, r *http.Request) {
 			"type":      notif.Type,
 			"content":   notif.Content,
 			"link":      notif.Link,
-			"isRead":    notif.IsRead,
-			"createdAt": notif.CreatedAt,
+			"isread":    notif.IsRead,
+			"createdat": notif.CreatedAt,
 		}
 		notifications = append(notifications, notificationMap)
 	}
@@ -84,7 +84,7 @@ func DeleteAllNotifications(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = dbPool.Exec(r.Context(), "DELETE FROM notifications WHERE userId = $1", userID)
+	_, err = dbPool.Exec(r.Context(), "DELETE FROM notifications WHERE userid = $1", userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "Error deleting notifications: %v"}`, err), http.StatusInternalServerError)
 		return
@@ -121,7 +121,7 @@ func DeleteNotification(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := dbPool.Exec(r.Context(),
-		"DELETE FROM notifications WHERE id = $1 AND userId = $2",
+		"DELETE FROM notifications WHERE id = $1 AND userid = $2",
 		notificationID, userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "Error deleting notification: %v"}`, err), http.StatusInternalServerError)
@@ -157,7 +157,7 @@ func MarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = dbPool.Exec(r.Context(), "UPDATE notifications SET isRead = TRUE WHERE userId = $1", userID)
+	_, err = dbPool.Exec(r.Context(), "UPDATE notifications SET isread = TRUE WHERE userid = $1", userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "Error marking notifications as read: %v"}`, err), http.StatusInternalServerError)
 		return
@@ -194,7 +194,7 @@ func MarkNotificationRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := dbPool.Exec(r.Context(),
-		"UPDATE notifications SET isRead = TRUE WHERE id = $1 AND userId = $2",
+		"UPDATE notifications SET isread = TRUE WHERE id = $1 AND userid = $2",
 		notificationID, userID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error": "Error marking notification as read: %v"}`, err), http.StatusInternalServerError)

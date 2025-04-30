@@ -50,7 +50,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var author types.User
-	err = db.QueryRow(context.Background(), `SELECT id, isBanned FROM users WHERE id = $1`, authorID).Scan(&author.ID, &author.IsBanned)
+	err = db.QueryRow(context.Background(), `select id, isbanned from users where id = $1`, authorID).Scan(&author.ID, &author.IsBanned)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			http.Error(w, `{"error": "Author not found"}`, http.StatusBadRequest)
@@ -73,7 +73,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 
 	// Retrieve the current comments for the post as raw JSON bytes
 	var currentCommentsBytes []byte
-	err = db.QueryRow(context.Background(), `SELECT comments FROM post WHERE id = $1`, postID).Scan(&currentCommentsBytes)
+	err = db.QueryRow(context.Background(), `select comments from post where id = $1`, postID).Scan(&currentCommentsBytes)
 	if err != nil && err != pgx.ErrNoRows {
 		http.Error(w, `{"error": "Failed to retrieve current comments"}`, http.StatusInternalServerError)
 		println(err.Error())
@@ -101,9 +101,9 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.Exec(context.Background(), `
-	UPDATE post
-	SET comments = $1
-	WHERE id = $2
+	update post
+	set comments = $1
+	where id = $2
 `, updatedCommentsJSON, postID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to add comment to post"}`, http.StatusInternalServerError)
@@ -111,11 +111,11 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var commenterDisplayName, authorId string
-	if err = db.QueryRow(r.Context(), "SELECT displayname FROM users WHERE id = $1", authorID).Scan(&commenterDisplayName); err != nil {
+	if err = db.QueryRow(r.Context(), "select displayname from users where id = $1", authorID).Scan(&commenterDisplayName); err != nil {
 		http.Error(w, "Error fetching display name", http.StatusInternalServerError)
 		return
 	}
-	if err = db.QueryRow(r.Context(), "SELECT author FROM post WHERE id = $1", postID).Scan(&authorId); err != nil {
+	if err = db.QueryRow(r.Context(), "select author from post where id = $1", postID).Scan(&authorId); err != nil {
 		http.Error(w, "Error fetching post author", http.StatusInternalServerError)
 		return
 	}
@@ -123,8 +123,8 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	// Skip notification if the user is liking their own post
 	if authorID != authorId {
 		_, err = db.Exec(r.Context(),
-			"INSERT INTO notifications (userid, type, content, link) VALUES ($1, $2, $3, $4)",
-			authorId, "like", fmt.Sprintf("you've recieved a comment on your post by %s !", commenterDisplayName), fmt.Sprintf("/post/%s", postID))
+			"insert into notifications (userid, type, content, link) values ($1, $2, $3, $4)",
+			authorId, "like", fmt.Sprintf("you've received a comment on your post by %s!", commenterDisplayName), fmt.Sprintf("/post/%s", postID))
 		if err != nil {
 			http.Error(w, "Error creating like notification", http.StatusInternalServerError)
 			println(err)

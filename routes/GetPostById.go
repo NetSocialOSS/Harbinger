@@ -35,8 +35,8 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 
 	var post types.Post
 	query := `
-			SELECT id, author, title, content, coterie, scheduledFor, image, poll, createdAt, hearts, comments
-			FROM Post WHERE id = $1`
+			select id, author, title, content, coterie, scheduledfor, image, poll, createdat, hearts, comments
+			from post where id = $1`
 	err := db.QueryRow(context.Background(), query, postID).Scan(
 		&post.ID, &post.Author, &post.Title, &post.Content, &coterie, &scheduledFor, &image,
 		&poll, &post.CreatedAt, &hearts, &comments)
@@ -121,8 +121,8 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch author details
 	var author types.Author
-	query = `SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isPartner, isOwner, isModerator, createdAt
-						FROM users WHERE id = $1`
+	query = `select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, ispartner, isowner, ismoderator, createdat
+						from users where id = $1`
 	err = db.QueryRow(context.Background(), query, post.Author).Scan(
 		&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
 		&author.IsDeveloper, &author.IsPartner, &author.IsOwner, &author.IsModerator, &author.CreatedAt)
@@ -135,8 +135,8 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var commentsWithAuthor []types.Comment
 	for _, comment := range post.Comments {
 		var commentAuthor types.Author
-		query := `SELECT username, isVerified, isOrganisation, profilePicture, isOwner, isModerator, isDeveloper
-						FROM users WHERE id = $1`
+		query := `select username, isverified, isorganisation, profilepicture, isowner, ismoderator, isdeveloper
+						from users where id = $1`
 		err = db.QueryRow(context.Background(), query, comment.Author).Scan(
 			&commentAuthor.Username, &commentAuthor.IsVerified, &commentAuthor.IsOrganisation, &commentAuthor.ProfilePicture,
 			&commentAuthor.IsOwner, &commentAuthor.IsModerator, &commentAuthor.IsDeveloper)
@@ -187,7 +187,7 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 	var heartsWithUsernames []string
 	for _, heartID := range post.Hearts {
 		var heartAuthor types.Author
-		if err := db.QueryRow(context.Background(), `SELECT username FROM users WHERE id = $1`, heartID).Scan(&heartAuthor.Username); err != nil {
+		if err := db.QueryRow(context.Background(), `select username from users where id = $1`, heartID).Scan(&heartAuthor.Username); err != nil {
 			heartsWithUsernames = append(heartsWithUsernames, "Unknown")
 			continue
 		}

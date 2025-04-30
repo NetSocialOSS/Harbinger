@@ -30,7 +30,7 @@ func CheckCoterieChatAllowed(next http.Handler) http.Handler {
 		}
 
 		var isChatAllowed bool
-		err := db.QueryRow(context.Background(), "SELECT isChatAllowed FROM coterie WHERE name = $1", coterieName).Scan(&isChatAllowed)
+		err := db.QueryRow(context.Background(), "select ischatalowed from coterie where name = $1", coterieName).Scan(&isChatAllowed)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
@@ -78,7 +78,7 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var memberExists bool
-	err = db.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM coterie WHERE name = $1 AND $2 = ANY(members))", coterieName, userID).Scan(&memberExists)
+	err = db.QueryRow(context.Background(), "select exists (select 1 from coterie where name = $1 and $2 = any(members))", coterieName, userID).Scan(&memberExists)
 	if err != nil {
 		http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -97,7 +97,7 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.Exec(
 		context.Background(),
-		"INSERT INTO messages (id, coterie, userid, content, createdat) VALUES ($1, $2, $3, $4, $5)",
+		"insert into messages (id, coterie, userid, content, createdat) values ($1, $2, $3, $4, $5)",
 		uuid.New().String(), coterieName, userID, encryptedContent, time.Now(),
 	)
 	if err != nil {
@@ -137,7 +137,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var memberExists bool
-	err = db.QueryRow(context.Background(), "SELECT EXISTS (SELECT 1 FROM coterie WHERE name = $1 AND $2 = ANY(members))", coterieName, userID).Scan(&memberExists)
+	err = db.QueryRow(context.Background(), "select exists (select 1 from coterie where name = $1 and $2 = any(members))", coterieName, userID).Scan(&memberExists)
 	if err != nil {
 		http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -148,7 +148,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query(context.Background(), "SELECT content, createdat, user_id FROM messages WHERE coterie = $1 ORDER BY createdat DESC", coterieName)
+	rows, err := db.Query(context.Background(), "select content, createdat, user_id from messages where coterie = $1 order by createdat desc", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch messages: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -172,7 +172,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var username, profilePicture string
-		if err := db.QueryRow(context.Background(), "SELECT username, profilepicture FROM users WHERE id = $1", userID).Scan(&username, &profilePicture); err != nil {
+		if err := db.QueryRow(context.Background(), "select username, profilepicture from users where id = $1", userID).Scan(&username, &profilePicture); err != nil {
 			http.Error(w, `{"error": "Error fetching user data: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
 		}

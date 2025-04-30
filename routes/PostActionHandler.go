@@ -158,19 +158,18 @@ func handleVote(w http.ResponseWriter, r *http.Request, db *pgxpool.Pool, userID
 	SELECT idx - 1 AS idx
 	FROM (
 		SELECT elem, idx
-		FROM jsonb_array_elements(COALESCE((SELECT poll FROM post WHERE id = $3)::jsonb->'options', '[]')) 
-		WITH ORDINALITY AS t(elem, idx)
+		FROM jsonb_array_elements(COALESCE((SELECT poll FROM post WHERE id = $3)::jsonb->'options', '[]'))  WITH ORDINALITY AS t(elem, idx)
 	) AS subquery
 	WHERE elem->>'id' = $2
 )
-UPDATE post 
+UPDATE post
 SET poll = jsonb_set(
-	poll, 
+	poll,
 	ARRAY['options', (matched_option.idx)::text, 'votes'],  -- Use an array for the path
 	COALESCE(
-		(poll->'options'->(matched_option.idx)::text->'votes') || to_jsonb($1::text), 
+		(poll->'options'->(matched_option.idx)::text->'votes') || to_jsonb($1::text),
 		to_jsonb(array[$1::text])
-	), 
+	),
 	true
 )
 FROM matched_option

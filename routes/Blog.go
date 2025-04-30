@@ -116,7 +116,7 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query the users table to check authorization
-	err = db.QueryRow(context.Background(), "SELECT id, isDeveloper, isOwner FROM users WHERE id = $1", UserID).Scan(&user.ID, &user.IsDeveloper, &user.IsOwner)
+	err = db.QueryRow(context.Background(), "select id, isdeveloper, isowner from users where id = $1", UserID).Scan(&user.ID, &user.IsDeveloper, &user.IsOwner)
 	if err != nil || !(user.IsDeveloper || user.IsOwner) {
 		http.Error(w, "User not authorized to add posts", http.StatusForbidden)
 		return
@@ -131,8 +131,8 @@ func AddBlogPost(w http.ResponseWriter, r *http.Request) {
 	// Insert new blog post
 	blogSlug := generateSlug(Title)
 	_, err = db.Exec(context.Background(), `
-		INSERT INTO blogpost (slug, title, date, authorId, overview, content) 
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		insert into blogpost (slug, title, date, authorid, overview, content) 
+		values ($1, $2, $3, $4, $5, $6)`,
 		blogSlug, Title, time.Now(), UserID, Overview, contentBodies,
 	)
 	if err != nil {

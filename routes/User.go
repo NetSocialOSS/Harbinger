@@ -38,7 +38,7 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	var user types.User
-	err = dbPool.QueryRow(r.Context(), `SELECT id, email FROM users WHERE id = $1`, userId).Scan(&user.ID, &user.Email)
+	err = dbPool.QueryRow(r.Context(), `select id, email from users where id = $1`, userId).Scan(&user.ID, &user.Email)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user details", http.StatusInternalServerError)
 		return
@@ -63,19 +63,19 @@ func deleteAccount(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	_, err = tx.Exec(r.Context(), `DELETE FROM users WHERE id = $1`, userId)
+	_, err = tx.Exec(r.Context(), `delete from users where id = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = tx.Exec(r.Context(), `DELETE FROM post WHERE author = $1`, userId)
+	_, err = tx.Exec(r.Context(), `delete from post where author = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete posts", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = tx.Exec(r.Context(), `DELETE FROM coterie WHERE owner = $1`, userId)
+	_, err = tx.Exec(r.Context(), `delete from coterie where owner = $1`, userId)
 	if err != nil {
 		http.Error(w, "Failed to delete coteries", http.StatusInternalServerError)
 		return
@@ -111,11 +111,11 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 	// Query the user using pgxpool.QueryRow.
 	err := dbPool.QueryRow(r.Context(), `
-        SELECT id, username, displayName, bio, isVerified, isOrganisation, isDeveloper, isOwner,
-               isBanned, isPartner, isModerator, profilePicture, profileBanner, followers,
-               following, createdAt, links, isPrivate, isPrivateHearts
-        FROM "users"
-        WHERE username = $1
+        select id, username, displayname, bio, isverified, isorganisation, isdeveloper, isowner,
+               isbanned, ispartner, ismoderator, profilepicture, profilebanner, followers,
+               following, createdat, links, isprivate, isprivatehearts
+        from "users"
+        where username = $1
     `, usernameParam).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.Bio, &user.IsVerified, &user.IsOrganisation,
 		&user.IsDeveloper, &user.IsOwner, &user.IsBanned, &user.IsPartner, &user.IsModerator,
@@ -184,7 +184,7 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var resolvedUsername string
-		query := `SELECT username FROM users WHERE id = $1`
+		query := `select username from users where id = $1`
 		err := dbPool.QueryRow(r.Context(), query, id).Scan(&resolvedUsername)
 		if err != nil {
 			// If no row is found, return a default value.
@@ -327,11 +327,11 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 	// Query posts that are indexed (isIndexed = true) for this user.
 	var posts []map[string]interface{}
 	rows, err := dbPool.Query(r.Context(), `
-		SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
-		FROM post
-		WHERE isIndexed = true
-		AND author = $1
-		ORDER BY createdat DESC
+		select id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
+		from post
+		where isIndexed = true
+		and author = $1
+		order by createdat desc
 	`, user.ID)
 	if err != nil {
 		http.Error(w, "Failed to fetch posts", http.StatusInternalServerError)
@@ -392,8 +392,8 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		// Retrieve the author details for the post.
 		var author types.Author
 		err = dbPool.QueryRow(r.Context(), `
-				SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator
-				FROM users WHERE id = $1
+				select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator
+				from users where id = $1
 			`, post.Author).Scan(
 			&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner,
 			&author.ProfilePicture, &author.IsDeveloper, &author.IsOwner, &author.IsModerator,
@@ -422,11 +422,11 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 		var heartedPosts []map[string]interface{}
 		rows, err := dbPool.Query(r.Context(), `
-				SELECT p.id, p.title, p.content, p.author, image, poll, createdat, hearts
-				FROM post p
-				JOIN unnest(p.hearts) h ON h = $1
-				WHERE p.isIndexed = true
-				ORDER BY p.createdat DESC
+				select p.id, p.title, p.content, p.author, image, poll, createdat, hearts
+				from post p
+				join unnest(p.hearts) h on h = $1
+				where p.isIndexed = true
+				order by p.createdat desc
 			`, user.ID)
 		if err != nil {
 			http.Error(w, "Failed to fetch hearted posts", http.StatusInternalServerError)
@@ -450,8 +450,8 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 			var author types.Author
 			err = dbPool.QueryRow(r.Context(), `
-					SELECT username, isVerified, isOrganisation, profileBanner, profilePicture, isDeveloper, isOwner, isModerator
-					FROM users WHERE id = $1
+					select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator
+					from users where id = $1
 				`, post.Author).Scan(
 				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner,
 				&author.ProfilePicture, &author.IsDeveloper, &author.IsOwner, &author.IsModerator,
@@ -533,14 +533,14 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 
 	// Perform the update operation with pgxpool
 	query := `
-		UPDATE users 
-		SET 
-			displayName = COALESCE($1, displayName), 
-			bio = COALESCE($2, bio), 
-			profilePicture = COALESCE($3, profilePicture), 
-			profileBanner = COALESCE($4, profileBanner), 
-			links = COALESCE($5, links) 
-		WHERE id = $6`
+		update users
+		set
+			displayname = coalesce($1, displayname),
+			bio = coalesce($2, bio),
+			profilepicture = coalesce($3, profilepicture),
+			profilebanner = coalesce($4, profilebanner),
+			links = coalesce($5, links)
+		where id = $6`
 	_, err = dbPool.Exec(r.Context(), query, displayName, bio, profilePicture, profileBanner, links, userID)
 	if err != nil {
 		// If there's an error executing the query, respond with an error message
@@ -577,7 +577,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		ID        string         `json:"id"`
 		Followers pq.StringArray `json:"followers"`
 	}
-	err = dbPool.QueryRow(r.Context(), "SELECT id, followers FROM users WHERE username = $1", username).Scan(&userToBeUpdated.ID, &userToBeUpdated.Followers)
+	err = dbPool.QueryRow(r.Context(), "select id, followers from users where username = $1", username).Scan(&userToBeUpdated.ID, &userToBeUpdated.Followers)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			http.Error(w, "User not found", http.StatusNotFound)
@@ -592,7 +592,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		ID        string         `json:"id"`
 		Following pq.StringArray `json:"following"`
 	}
-	err = dbPool.QueryRow(r.Context(), "SELECT id, following FROM users WHERE id = $1", followerID).Scan(&followerUser.ID, &followerUser.Following)
+	err = dbPool.QueryRow(r.Context(), "select id, following from users where id = $1", followerID).Scan(&followerUser.ID, &followerUser.Following)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			http.Error(w, "Follower not found", http.StatusNotFound)
@@ -604,7 +604,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 
 	// Check if the follower is banned
 	var isBanned bool
-	err = dbPool.QueryRow(r.Context(), "SELECT isbanned FROM users WHERE id = $1", followerID).Scan(&isBanned)
+	err = dbPool.QueryRow(r.Context(), "select isbanned from users where id = $1", followerID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Error checking user status", http.StatusInternalServerError)
 		return
@@ -664,21 +664,21 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update followers for the target user
-	_, err = dbPool.Exec(r.Context(), "UPDATE users SET followers = $1 WHERE id = $2", pq.Array(updateFollowers), userToBeUpdated.ID)
+	_, err = dbPool.Exec(r.Context(), "update users set followers = $1 where id = $2", pq.Array(updateFollowers), userToBeUpdated.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating followers list for user %s: %v", username, err), http.StatusInternalServerError)
 		return
 	}
 
 	// Update following for the follower
-	_, err = dbPool.Exec(r.Context(), "UPDATE users SET following = $1 WHERE id = $2", pq.Array(updateFollowing), followerUser.ID)
+	_, err = dbPool.Exec(r.Context(), "update users set following = $1 where id = $2", pq.Array(updateFollowing), followerUser.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", username, err), http.StatusInternalServerError)
 		return
 	}
 
 	var followerDisplayName string
-	err = dbPool.QueryRow(r.Context(), "SELECT displayname FROM users WHERE id = $1", followerID).Scan(&followerDisplayName)
+	err = dbPool.QueryRow(r.Context(), "select displayname from users where id = $1", followerID).Scan(&followerDisplayName)
 	if err != nil {
 		http.Error(w, "Error fetching follower display name", http.StatusInternalServerError)
 		return
@@ -686,7 +686,7 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 
 	if action == "follow" {
 		_, err = dbPool.Exec(r.Context(),
-			"INSERT INTO notifications (userId, type, content, link) VALUES ($1, $2, $3, $4)",
+			"insert into notifications (userid, type, content, link) values ($1, $2, $3, $4)",
 			userToBeUpdated.ID, "follow", fmt.Sprintf("%s started following you", followerDisplayName), fmt.Sprintf("/user/%s", followerDisplayName))
 		if err != nil {
 			http.Error(w, "Error creating follow notification", http.StatusInternalServerError)
@@ -736,7 +736,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "togglePrivateHearts":
 		// Retrieve current privacy setting for private hearts
-		err := dbPool.QueryRow(r.Context(), `SELECT "isPrivateHearts" FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		err := dbPool.QueryRow(r.Context(), `select "isPrivateHearts" from users where id = $1`, userID).Scan(&currentPrivacy)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				http.Error(w, "User not found", http.StatusNotFound)
@@ -750,7 +750,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 		newPrivacySetting := !currentPrivacy
 
 		// Update the privacy setting in the database
-		_, err = dbPool.Exec(r.Context(), `UPDATE users SET "isPrivateHearts" = $1 WHERE id = $2`, newPrivacySetting, userID)
+		_, err = dbPool.Exec(r.Context(), `update users set "isPrivateHearts" = $1 where id = $2`, newPrivacySetting, userID)
 		if err != nil {
 			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
 			return
@@ -766,7 +766,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 
 	case "togglePrivateAccount":
 		// Retrieve current privacy setting for private account
-		err := dbPool.QueryRow(r.Context(), `SELECT isPrivate FROM users WHERE id = $1`, userID).Scan(&currentPrivacy)
+		err := dbPool.QueryRow(r.Context(), `select isprivate from users where id = $1`, userID).Scan(&currentPrivacy)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				http.Error(w, "User not found", http.StatusNotFound)
@@ -780,7 +780,7 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 		newPrivacySetting := !currentPrivacy
 
 		// Update the privacy setting in the database
-		_, err = dbPool.Exec(r.Context(), `UPDATE users SET isPrivate = $1 WHERE id = $2`, newPrivacySetting, userID)
+		_, err = dbPool.Exec(r.Context(), `update users set isprivate = $1 where id = $2`, newPrivacySetting, userID)
 		if err != nil {
 			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
 			return

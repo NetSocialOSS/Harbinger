@@ -1,14 +1,14 @@
 CREATE TABLE post (
-    id TEXT PRIMARY KEY NOT NULL,
-    title TEXT NOT NULL,
-    content TEXT NOT NULL,
-    author UUID NOT NULL REFERENCES users(id),
-    isIndexed BOOLEAN NOT NULL DEFAULT TRUE,
-    createdAt TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    coterie TEXT REFERENCES coterie(name),
-    scheduledfor TIMESTAMP DEFAULT NULL CHECK (scheduledfor > CURRENT_TIMESTAMP),
-    image TEXT[] DEFAULT '{}'::TEXT[],
-    poll JSONB DEFAULT NULL,
-    hearts TEXT[] DEFAULT '{}'::TEXT[],
-    comments JSONB DEFAULT NULL
+    id text PRIMARY KEY NOT NULL,
+    title text NOT NULL,
+    content text NOT NULL,
+    author uuid NOT NULL REFERENCES users(id),
+    isindexed boolean NOT NULL DEFAULT TRUE,
+    createdat timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    coterie text REFERENCES coterie(name),
+    scheduledfor timestamp DEFAULT NULL CHECK (scheduledfor > CURRENT_TIMESTAMP),
+    image text[] DEFAULT '{}'::text[],
+    poll jsonb DEFAULT NULL,
+    hearts text[] DEFAULT '{}'::text[],
+    comments jsonb DEFAULT NULL
 );

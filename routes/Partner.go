@@ -54,11 +54,11 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	Title := r.URL.Query().Get("name")
+	title := r.URL.Query().Get("name")
 	text := r.URL.Query().Get("description")
-	Link := r.URL.Query().Get("link")
-	Logo := r.URL.Query().Get("logo")
-	Banner := r.URL.Query().Get("banner")
+	link := r.URL.Query().Get("link")
+	logo := r.URL.Query().Get("logo")
+	banner := r.URL.Query().Get("banner")
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
 		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
@@ -84,16 +84,16 @@ func AddNewPartner(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newPartner := types.Partner{
-		Title:  Title,
+		Title:  title,
 		Text:   text,
-		Link:   Link,
-		Banner: Banner,
-		Logo:   Logo,
+		Link:   link,
+		Banner: banner,
+		Logo:   logo,
 	}
 
 	_, err = db.Exec(context.Background(), `
-		INSERT INTO partner (title, text, link, banner, logo) 
-		VALUES ($1, $2, $3, $4, $5, $6)`,
+		INSERT INTO partner (title, text, link, banner, logo)
+		VALUES ($1, $2, $3, $4, $5)`,
 		newPartner.Title, newPartner.Text, newPartner.Link, newPartner.Banner, newPartner.Logo,
 	)
 	if err != nil {

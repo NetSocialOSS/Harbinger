@@ -75,7 +75,7 @@ func authMiddleware(next http.Handler) http.Handler {
 
 		conn := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 		var exists bool
-		query := "SELECT EXISTS(SELECT 1 FROM sessions WHERE userid = $1 AND token = $2)"
+		query := "select exists(select 1 from sessions where userid = $1 and token = $2)"
 		err = conn.QueryRow(r.Context(), query, userID.String(), tokenCookie.Value).Scan(&exists)
 		if err != nil {
 			http.Error(w, "Database error", http.StatusInternalServerError)
@@ -161,7 +161,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	// Check for existing user
 	var exists bool
-	err = pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1 OR email = $2)", signupData.Username, email).Scan(&exists)
+	err = pool.QueryRow(r.Context(), "select exists(select 1 from users where username = $1 or email = $2)", signupData.Username, email).Scan(&exists)
 	if err != nil {
 		http.Error(w, "Database error", http.StatusInternalServerError)
 		return
@@ -173,7 +173,7 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	// Get the last user ID
 	var lastUserID int
-	err = pool.QueryRow(r.Context(), "SELECT COALESCE(MAX(userid::int), 0) FROM users;").Scan(&lastUserID)
+	err = pool.QueryRow(r.Context(), "select coalesce(max(userid::int), 0) from users;").Scan(&lastUserID)
 	if err != nil {
 		http.Error(w, "Failed to get last user ID", http.StatusInternalServerError)
 		return
@@ -189,10 +189,10 @@ func UserSignup(w http.ResponseWriter, r *http.Request) {
 
 	// Insert new user
 	_, err = tx.Exec(r.Context(), `
-		INSERT INTO users (
-			 userid, username, displayname, email, password, 
+		insert into users (
+			 userid, username, displayname, email, password,
 			profilepicture, createdat
-		) VALUES ($1::INT, $2, $3, $4, $5, $6, $7)`,
+		) values ($1::int, $2, $3, $4, $5, $6, $7)`,
 		lastUserID+1, signupData.Username, signupData.Username, email,
 		hashedPassword, "https://cdn.netsocial.app/logos/netsocial.png",
 		time.Now(),
@@ -238,7 +238,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	var user types.User
 
-	query := `SELECT id, username, email, password FROM users WHERE username = $1 OR email = $1`
+	query := `select id, username, email, password from users where username = $1 or email = $1`
 	err = db.QueryRow(r.Context(), query, decryptedIdentifier).Scan(&user.ID, &user.Username, &user.Email, &user.Password)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
@@ -289,7 +289,7 @@ func UserLogin(w http.ResponseWriter, r *http.Request) {
 
 	expirationTime := time.Unix(int64(claims.Claims.(jwt.MapClaims)["exp"].(float64)), 0)
 
-	insertSessionQuery := `INSERT INTO sessions (sessionid, userid, device, expiresat, token, type) VALUES ($1, $2, $3, $4, $5, $6)`
+	insertSessionQuery := `insert into sessions (sessionid, userid, device, expiresat, token, type) values ($1, $2, $3, $4, $5, $6)`
 	_, err = db.Exec(r.Context(), insertSessionQuery, sessionID, user.ID, device, expirationTime, token, "harbinger-generated")
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -333,7 +333,7 @@ func UserLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := db.Exec(r.Context(), "DELETE FROM sessions WHERE sessionid = $1 AND userid = $2",
+	result, err := db.Exec(r.Context(), "delete from sessions where sessionid = $1 and userid = $2",
 		logoutData.SessionID, userUUID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
@@ -387,7 +387,7 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var user types.User
-	err := db.QueryRow(r.Context(), "SELECT id, password FROM users WHERE id = $1", userID).Scan(&user.ID, &user.Password)
+	err := db.QueryRow(r.Context(), "select id, password from users where id = $1", userID).Scan(&user.ID, &user.Password)
 	if errors.Is(err, pgx.ErrNoRows) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
@@ -426,13 +426,13 @@ func ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.Exec(r.Context(), "UPDATE users SET password = $1 WHERE id = $2", string(hashedNewPassword), user.ID)
+	_, err = db.Exec(r.Context(), "update users set password = $1 where id = $2", string(hashedNewPassword), user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)
 		return
 	}
 
-	_, err = db.Exec(r.Context(), "DELETE FROM sessions WHERE userid = $1", user.ID)
+	_, err = db.Exec(r.Context(), "delete from sessions where userid = $1", user.ID)
 	if err != nil {
 		log.Printf("Failed to clear sessions: %v", err)
 	}
@@ -455,9 +455,9 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 
 	var user types.User
 	err := db.QueryRow(r.Context(), `
-		SELECT id, username, displayname, bio, profilepicture, isorganisation,
+		select id, username, displayname, bio, profilepicture, isorganisation,
 		       isprivatehearts, isprivate, links
-		FROM users WHERE id = $1
+		from users where id = $1
 	`, userID).Scan(
 		&user.ID, &user.Username, &user.DisplayName, &user.Bio,
 		&user.ProfilePicture, &user.IsOrganisation,
@@ -474,8 +474,8 @@ func CurrentUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(r.Context(), `
-		SELECT sessionid, device, startedat, expiresat, type
-		FROM sessions WHERE userid = $1
+		select sessionid, device, startedat, expiresat, type
+		from sessions where userid = $1
 	`, userID)
 	if err != nil {
 		http.Error(w, "Failed to retrieve user sessions", http.StatusInternalServerError)
@@ -557,8 +557,8 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := db.Exec(r.Context(), `
-		DELETE FROM sessions 
-		WHERE sessionid = $1 AND userid = $2
+		delete from sessions
+		where sessionid = $1 and userid = $2
 	`, sessionID, userID)
 	if err != nil {
 		http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
@@ -579,11 +579,9 @@ func LogOutSession(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteNoneMode,
 		Path:     "/",
 	})
-
 	response := map[string]string{"message": "Session revoked and user logged out successfully"}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, "Failed to send response", http.StatusInternalServerError)
-		return
 	}
 }
 
@@ -610,8 +608,8 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 	var user types.User
 	err := db.QueryRow(r.Context(), `
-		SELECT id, email FROM users 
-		WHERE username = $1 OR email = $1
+		select id, email from users
+		where username = $1 or email = $1
 	`, resetData.Identifier).Scan(&user.ID, &user.Email)
 
 	// Always return success to prevent user enumeration
@@ -640,9 +638,9 @@ func ResetPassword(w http.ResponseWriter, r *http.Request) {
 	// Set temporary password expiry to 15 minutes from now
 	tempPasswordExpiry := time.Now().Add(15 * time.Minute)
 	_, err = db.Exec(r.Context(), `
-		UPDATE users 
-		SET password = $1, temp_password_expiry = $2
-		WHERE id = $3
+		update users
+		set password = $1, temp_password_expiry = $2
+		where id = $3
 	`, string(hashedPassword), tempPasswordExpiry, user.ID)
 	if err != nil {
 		http.Error(w, "Failed to update password", http.StatusInternalServerError)

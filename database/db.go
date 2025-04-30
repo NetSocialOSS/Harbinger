@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4/pgxpool"
@@ -16,15 +19,14 @@ import (
 
 const DBContextKey = "db"
 const RedisContextKey = "redis"
+const backupFileNameFormat = "PGDBDUMP_SEEDY_%s.sql"
 
 type Database struct {
 	Postgres *pgxpool.Pool
 	Redis    *redis.Client
 }
 
-// Connect to PostgreSQL and Redis databases
-func Connect(postgresURL, redisURL, seedDir string) (*Database, error) {
-	// PostgreSQL Connection
+func Connect(postgresURL, redisURL, seedDir, backupDir string) (*Database, error) {
 	pgConfig, err := pgxpool.ParseConfig(postgresURL)
 	if err != nil {
 		log.Printf("[Harbinger] unable to parse PostgreSQL URL: %v", err)
@@ -36,10 +38,23 @@ func Connect(postgresURL, redisURL, seedDir string) (*Database, error) {
 		return nil, fmt.Errorf("unable to connect to PostgreSQL: %v", err)
 	}
 
-	// Redis Connection
+	log.Println("[Harbinger] connected to PostgreSQL")
+
+	if backupDir != "" {
+		log.Printf("[Harbinger] Initiating database backup to %s folder...", backupDir)
+		if err := backupDatabase(postgresURL, backupDir); err != nil {
+			log.Printf("[Harbinger] Warning: Unable to make DB backup. Proceeding with Seedey without backup: %v", err)
+		} else {
+			log.Println("[Harbinger] Database backup complete.")
+		}
+	} else {
+		log.Println("[Harbinger] No backup directory specified. Skipping database backup.")
+	}
+
 	opt, err := redis.ParseURL(redisURL)
 	if err != nil {
 		log.Printf("[Harbinger] unable to parse Redis URL: %v", err)
+		pgPool.Close()
 		return nil, fmt.Errorf("unable to parse Redis URL: %v", err)
 	}
 
@@ -47,17 +62,18 @@ func Connect(postgresURL, redisURL, seedDir string) (*Database, error) {
 	_, err = redisClient.Ping(context.Background()).Result()
 	if err != nil {
 		log.Printf("[Harbinger] unable to connect to Redis: %v", err)
+		pgPool.Close()
 		return nil, fmt.Errorf("unable to connect to Redis: %v", err)
 	}
 
-	log.Println("[Harbinger] connected to PostgreSQL")
 	log.Println("[Harbinger] connected to Redis")
 	log.Println("[Harbinger] Initiating seedey sequence...")
 
-	// Apply seed scripts
 	err = Seedey(pgPool, seedDir)
 	if err != nil {
 		log.Printf("[Seedey] error running seed scripts: %v", err)
+	} else {
+		log.Println("[Harbinger] Seedey sequence completed.")
 	}
 
 	return &Database{
@@ -66,8 +82,8 @@ func Connect(postgresURL, redisURL, seedDir string) (*Database, error) {
 	}, nil
 }
 
-// Disconnect from PostgreSQL and Redis
 func Disconnect(db *Database) {
+
 	if db.Postgres != nil {
 		db.Postgres.Close()
 		log.Println("[Gracey] disconnected from PostgreSQL")
@@ -82,7 +98,6 @@ func Disconnect(db *Database) {
 	}
 }
 
-// Middleware to add database connections to context
 func Middleware(db *Database) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +108,6 @@ func Middleware(db *Database) func(next http.Handler) http.Handler {
 	}
 }
 
-// Check if a table exists in the database
 func tableExists(db *pgxpool.Pool, tableName string) (bool, error) {
 	query := `SELECT to_regclass($1)`
 	var result pgtype.Text
@@ -104,7 +118,6 @@ func tableExists(db *pgxpool.Pool, tableName string) (bool, error) {
 	return result.String != "", nil
 }
 
-// Check if a type exists in the database
 func typeExists(db *pgxpool.Pool, typeName string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM pg_type WHERE typname = $1)`
 	var exists bool
@@ -115,7 +128,6 @@ func typeExists(db *pgxpool.Pool, typeName string) (bool, error) {
 	return exists, nil
 }
 
-// Check if an index exists in the database
 func indexExists(db *pgxpool.Pool, indexName string) (bool, error) {
 	query := `SELECT EXISTS(SELECT 1 FROM pg_indexes WHERE indexname = $1)`
 	var exists bool
@@ -126,7 +138,6 @@ func indexExists(db *pgxpool.Pool, indexName string) (bool, error) {
 	return exists, nil
 }
 
-// Run Seed to check and apply any missing seed files
 func Seedey(db *pgxpool.Pool, seedDir string) error {
 	files, err := os.ReadDir(seedDir)
 	if err != nil {
@@ -137,7 +148,6 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 	var seededObjects []string
 	var skippedObjects []string
 
-	// Ensure users.sql is processed first
 	usersSQLFound := false
 	for _, file := range files {
 		if file.Name() == "users.sql" {
@@ -169,19 +179,20 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 				} else {
 					objectsToSeed = true
 					seededObjects = append(seededObjects, objectName)
+					log.Printf("[Seedey] Successfully seeded table: %s", objectName)
 				}
 			} else {
 				skippedObjects = append(skippedObjects, objectName)
+				log.Printf("[Seedey] Table already exists, skipping seed: %s", objectName)
 			}
 			break
 		}
 	}
 
 	if !usersSQLFound {
-		return fmt.Errorf("[Seedey] users.sql file not found in seed directory")
+		log.Println("[Seedey] Warning: users.sql file not found in seed directory.")
 	}
 
-	// Process remaining seed files
 	for _, file := range files {
 		if file.Name() == "users.sql" {
 			continue
@@ -196,25 +207,26 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 
 			objectType, objectName := getObjectFromSQL(string(sqlContent))
 			if objectName == "" {
-				log.Printf("[Seedey] Could not extract object from %s", sqlFilePath)
+				log.Printf("[Seedey] Could not extract object (table, enum, or index) from %s", sqlFilePath)
 				continue
 			}
 
 			var exists bool
+			checkErr := error(nil)
 			switch objectType {
 			case "table":
-				exists, err = tableExists(db, objectName)
+				exists, checkErr = tableExists(db, objectName)
 			case "enum":
-				exists, err = typeExists(db, objectName)
+				exists, checkErr = typeExists(db, objectName)
 			case "index":
-				exists, err = indexExists(db, objectName)
+				exists, checkErr = indexExists(db, objectName)
 			default:
-				log.Printf("[Seedey] Unsupported object type %s in %s", objectType, sqlFilePath)
+				log.Printf("[Seedey] Unsupported object type '%s' in %s. Skipping.", objectType, sqlFilePath)
 				continue
 			}
 
-			if err != nil {
-				log.Printf("[Seedey] Error checking existence for %s %s: %v", objectType, objectName, err)
+			if checkErr != nil {
+				log.Printf("[Seedey] Error checking existence for %s '%s': %v. Skipping %s.", objectType, objectName, checkErr, file.Name())
 				continue
 			}
 
@@ -222,13 +234,15 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 				log.Printf("[Seedey] Running seed script for %s %s from %s", objectType, objectName, sqlFilePath)
 				_, err := db.Exec(context.Background(), string(sqlContent))
 				if err != nil {
-					log.Printf("[Seedey] Error executing seed script for %s %s: %v", objectType, objectName, err)
+					log.Printf("[Seedey] Error executing seed script for %s %s (%s): %v", objectType, objectName, file.Name(), err)
 				} else {
 					objectsToSeed = true
 					seededObjects = append(seededObjects, objectName)
+					log.Printf("[Seedey] Successfully seeded %s: %s", objectType, objectName)
 				}
 			} else {
 				skippedObjects = append(skippedObjects, objectName)
+				log.Printf("[Seedey] %s already exists, skipping seed: %s", objectType, objectName)
 			}
 		}
 	}
@@ -236,40 +250,129 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 	if objectsToSeed {
 		log.Printf("[Seedey] Seeding complete. Objects seeded: %v", seededObjects)
 	} else {
-		if len(skippedObjects) > 0 {
-			log.Printf("[Seedey] No need for seeding. All objects are up-to-date.")
+		if len(skippedObjects) > 0 || !usersSQLFound {
+			log.Printf("[Seedey] No new objects needed seeding. Objects checked/skipped: %v", skippedObjects)
+		} else {
+			log.Println("[Seedey] No seed files processed.")
 		}
 	}
 
 	return nil
 }
 
-// Extract the object type and name from SQL content
 func getObjectFromSQL(sqlContent string) (objectType string, objectName string) {
 	lines := strings.Split(sqlContent, "\n")
 	for _, line := range lines {
 		trimmedLine := strings.TrimSpace(line)
 		upperLine := strings.ToUpper(trimmedLine)
 
-		// Check for CREATE TABLE
+		if strings.HasPrefix(trimmedLine, "--") || trimmedLine == "" {
+			continue
+		}
+
 		if strings.HasPrefix(upperLine, "CREATE TABLE") {
 			parts := strings.Fields(trimmedLine)
 			if len(parts) >= 3 {
-				return "table", parts[2]
+				name := parts[2]
+				name = strings.Trim(name, `"`)
+				if parts := strings.Split(name, "."); len(parts) > 1 {
+					name = parts[len(parts)-1]
+				}
+				name = strings.TrimSuffix(name, ";")
+				return "table", name
 			}
-			// Check for CREATE TYPE as ENUM
 		} else if strings.HasPrefix(upperLine, "CREATE TYPE") && strings.Contains(upperLine, "AS ENUM") {
 			parts := strings.Fields(trimmedLine)
 			if len(parts) >= 3 {
-				return "enum", parts[2]
+				name := parts[2]
+				name = strings.Trim(name, `"`)
+				if parts := strings.Split(name, "."); len(parts) > 1 {
+					name = parts[len(parts)-1]
+				}
+				name = strings.TrimSuffix(name, ";")
+				return "enum", name
 			}
-			// Check for CREATE INDEX
+		} else if strings.HasPrefix(upperLine, "CREATE UNIQUE INDEX") {
+			parts := strings.Fields(trimmedLine)
+			if len(parts) >= 4 && strings.ToUpper(parts[2]) == "INDEX" {
+				name := parts[3]
+				name = strings.Trim(name, `"`)
+				name = strings.TrimSuffix(name, ";")
+				return "index", name
+			} else if len(parts) >= 3 {
+				log.Printf("[Seedey] Warning: Complex CREATE INDEX statement in %s. Heuristic name extraction.", trimmedLine)
+				name := parts[2]
+				name = strings.Trim(name, `"`)
+				name = strings.TrimSuffix(name, ";")
+				if strings.ToUpper(parts[1]) == "UNIQUE" {
+					if len(parts) >= 4 {
+						name = parts[3]
+						name = strings.Trim(name, `"`)
+						name = strings.TrimSuffix(name, ";")
+					}
+				}
+				return "index", name
+			}
 		} else if strings.HasPrefix(upperLine, "CREATE INDEX") {
 			parts := strings.Fields(trimmedLine)
 			if len(parts) >= 3 {
-				return "index", parts[2]
+				name := parts[2]
+				name = strings.Trim(name, `"`)
+				name = strings.TrimSuffix(name, ";")
+				return "index", name
 			}
 		}
 	}
 	return "", ""
+}
+
+func backupDatabase(postgresURL, backupDir string) error {
+	if err := os.MkdirAll(backupDir, 0755); err != nil {
+		return fmt.Errorf("failed to create backup directory %s: %v", backupDir, err)
+	}
+
+	dateStr := time.Now().Format("2006-01-02")
+	fileName := fmt.Sprintf(backupFileNameFormat, dateStr)
+	backupFilePath := filepath.Join(backupDir, fileName)
+
+	if _, err := os.Stat(backupFilePath); err == nil {
+		log.Printf("[Harbinger] Backup file for today (%s) already exists: %s. Skipping backup.", dateStr, backupFilePath)
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("error checking for existing backup file %s: %v", backupFilePath, err)
+	}
+
+	parsedURL, err := url.Parse(postgresURL)
+	if err != nil {
+		return fmt.Errorf("failed to parse postgres URL for backup: %v", err)
+	}
+
+	dbName := strings.TrimPrefix(parsedURL.Path, "/")
+	if dbName == "" {
+		return fmt.Errorf("database name not found in postgres URL path: %s", postgresURL)
+	}
+
+	cmd := exec.Command("pg_dump", "-F", "p", "-f", backupFilePath, dbName)
+
+	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, fmt.Sprintf("PGHOST=%s", parsedURL.Hostname()))
+	if parsedURL.Port() != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("PGPORT=%s", parsedURL.Port()))
+	}
+	if parsedURL.User != nil {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("PGUSER=%s", parsedURL.User.Username()))
+		if password, ok := parsedURL.User.Password(); ok {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("PGPASSWORD=%s", password))
+		}
+	}
+
+	log.Printf("[Harbinger] Running pg_dump command: %s", cmd.String())
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("pg_dump command failed: %v. Output:\n%s", err, string(output))
+	}
+
+	log.Printf("[Harbinger] Successfully created backup: %s", backupFilePath)
+	return nil
 }
