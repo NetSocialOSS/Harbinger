@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gtuk/discordwebhook"
@@ -17,6 +18,24 @@ const (
 
 var (
 	sensitiveKeys = []string{"reporterID", "UserID", "session_id", "userId", "user_id", "modid"}
+	// Add status codes to ignore
+	ignoredStatusCodes = map[int]struct{}{
+		http.StatusNotFound:                   {}, // 404
+		http.StatusGone:                       {}, // 410
+		http.StatusTooManyRequests:            {}, // 429
+		http.StatusUnauthorized:               {}, // 401
+		http.StatusForbidden:                  {}, // 403
+		http.StatusMovedPermanently:           {}, // 301
+		http.StatusFound:                      {}, // 302
+		http.StatusTemporaryRedirect:          {}, // 307
+		http.StatusPermanentRedirect:          {}, // 308
+		http.StatusMethodNotAllowed:           {}, // 405
+		http.StatusBadRequest:                 {}, // 400
+		http.StatusUnavailableForLegalReasons: {}, // 451
+		http.StatusUnprocessableEntity:        {}, // 422
+		418:                                   {}, // I'm a teapot
+	}
+	ignoredPaths = []string{"/robots.txt"}
 )
 
 // statusRecorder captures the status code from the response
@@ -36,10 +55,18 @@ func DiscordErrorReport(next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 		next.ServeHTTP(rec, r)
 
-		// Send error reports for status codes 400+ (excluding 401 & 403)
-		if rec.statusCode >= 400 &&
-			rec.statusCode != http.StatusUnauthorized &&
-			rec.statusCode != http.StatusForbidden {
+		// Ignore certain status codes
+		if _, ok := ignoredStatusCodes[rec.statusCode]; ok {
+			return
+		}
+		// Ignore certain paths (e.g., robots.txt)
+		for _, p := range ignoredPaths {
+			if strings.EqualFold(r.URL.Path, p) {
+				return
+			}
+		}
+		// Only report errors for status codes 400+ (excluding ignored)
+		if rec.statusCode >= 400 {
 			if err := sendErrorReportToDiscord(rec.statusCode, r); err != nil {
 				log.Printf("Failed to send error report to Discord: %v", err)
 			}
