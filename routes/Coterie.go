@@ -332,7 +332,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			}
 
 			now = time.Now()
-			if scheduledFor.Status == pgtype.Present && !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
+			if post.ScheduledFor.Status == pgtype.Present && !post.ScheduledFor.Time.IsZero() && post.ScheduledFor.Time.After(now) {
 				continue
 			}
 

@@ -144,7 +144,7 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if post.ScheduledFor.Valid && post.ScheduledFor.Time.After(now) {
+		if post.ScheduledFor.Status == pgtype.Present && post.ScheduledFor.Time.After(now) {
 			continue
 		}
 
@@ -207,7 +207,7 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		if post.ScheduledFor.Valid && !post.ScheduledFor.Time.IsZero() {
+		if post.ScheduledFor.Status == pgtype.Present && !post.ScheduledFor.Time.IsZero() {
 			postResponse["scheduledFor"] = post.ScheduledFor.Time
 		}
 
