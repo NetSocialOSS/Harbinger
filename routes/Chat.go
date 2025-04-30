@@ -30,7 +30,7 @@ func CheckCoterieChatAllowed(next http.Handler) http.Handler {
 		}
 
 		var isChatAllowed bool
-		err := db.QueryRow(context.Background(), "select ischatalowed from coterie where name = $1", coterieName).Scan(&isChatAllowed)
+		err := db.QueryRow(context.Background(), "select ischatallowed from coterie where name = $1", coterieName).Scan(&isChatAllowed)
 		if err != nil {
 			if err == pgx.ErrNoRows {
 				http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
