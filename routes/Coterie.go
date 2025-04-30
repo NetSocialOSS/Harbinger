@@ -357,7 +357,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 					"username":       author.Username,
 				},
 			}
-			if !post.ScheduledFor.IsZero() {
+			if post.ScheduledFor.Status == pgtype.Present && !post.ScheduledFor.Time.IsZero() {
 				postMap["scheduledFor"] = post.ScheduledFor
 			}
 			posts = append(posts, postMap)
