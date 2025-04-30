@@ -3,6 +3,8 @@ package types
 import (
 	"time"
 
+	"github.com/jackc/pgtype"
+
 	"github.com/google/uuid"
 )
 
@@ -29,21 +31,21 @@ const (
 )
 
 type Post struct {
-	ID            string    `bson:"id" json:"id"`
-	Title         string    `bson:"title" json:"title"`
-	Content       string    `bson:"content" json:"content"`
-	Author        string    `bson:"author" json:"-"`
-	CommentNumber int       `bson:"commentNumber" json:"commentNumber"`
-	TimeAgo       string    `bson:"timeAgo" json:"timeAgo"`
-	ScheduledFor  time.Time `bson:"scheduledFor" json:"scheduledFor"`
-	Image         []string  `bson:"image" json:"image"`
-	Indexing      bool      `bson:"isIndexed"`
-	Hearts        []string  `bson:"hearts" json:"hearts"`
-	CreatedAt     time.Time `bson:"createdAt" json:"createdAt"`
-	Poll          []Poll    `bson:"poll,omitempty" json:"poll,omitempty"`
-	Comments      []Comment `bson:"comments,omitempty" json:"comments,omitempty"`
-	Coterie       string    `bson:"coterie,omitempty" json:"coterie,omitempty"`
-	AuthorDetails Author    `bson:"authorDetails,omitempty" json:"authorDetails,omitempty"`
+	ID            string             `bson:"id" json:"id"`
+	Title         string             `bson:"title" json:"title"`
+	Content       string             `bson:"content" json:"content"`
+	Author        string             `bson:"author" json:"-"`
+	CommentNumber int                `bson:"commentNumber" json:"commentNumber"`
+	TimeAgo       string             `bson:"timeAgo" json:"timeAgo"`
+	ScheduledFor  pgtype.Timestamptz `bson:"scheduledFor" json:"scheduledFor"`
+	Image         []string           `bson:"image" json:"image"`
+	Indexing      bool               `bson:"isIndexed"`
+	Hearts        []string           `bson:"hearts" json:"hearts"`
+	CreatedAt     time.Time          `bson:"createdAt" json:"createdAt"`
+	Poll          []Poll             `bson:"poll,omitempty" json:"poll,omitempty"`
+	Comments      []Comment          `bson:"comments,omitempty" json:"comments,omitempty"`
+	Coterie       string             `bson:"coterie,omitempty" json:"coterie,omitempty"`
+	AuthorDetails Author             `bson:"authorDetails,omitempty" json:"authorDetails,omitempty"`
 }
 
 type Poll struct {

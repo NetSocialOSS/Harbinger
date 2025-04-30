@@ -356,6 +356,13 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Handle scheduledFor.
+		if scheduledFor.Status == pgtype.Present {
+			post.ScheduledFor = scheduledFor.Time
+		} else {
+			post.ScheduledFor = time.Time{}
+		}
+
 		// Handle the poll JSON.
 		if pollJSON.Status == pgtype.Present {
 			var decodedPoll []types.Poll
