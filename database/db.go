@@ -83,7 +83,6 @@ func Connect(postgresURL, redisURL, seedDir, backupDir string) (*Database, error
 }
 
 func Disconnect(db *Database) {
-
 	if db.Postgres != nil {
 		db.Postgres.Close()
 		log.Println("[Gracey] disconnected from PostgreSQL")
@@ -172,18 +171,20 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 			}
 
 			if !exists {
-				log.Printf("[Seedey] Running seed script for table %s from %s", objectName, sqlFilePath)
+				log.Printf("[Seedey] Running seed script for %s %s from %s", objectType, objectName, sqlFilePath)
 				_, err := db.Exec(context.Background(), string(sqlContent))
 				if err != nil {
-					return fmt.Errorf("[Seedey] Error executing seed script for users: %v", err)
-				} else {
-					objectsToSeed = true
-					seededObjects = append(seededObjects, objectName)
-					log.Printf("[Seedey] Successfully seeded table: %s", objectName)
+					return fmt.Errorf("[Seedey] Error executing seed script for %s %s: %v", objectType, objectName, err)
 				}
 			} else {
-				skippedObjects = append(skippedObjects, objectName)
-				log.Printf("[Seedey] Table already exists, skipping seed: %s", objectName)
+				if objectType == "table" {
+					log.Printf("[Seedey] Table exists: %s. Checking for schema updates...", objectName)
+					if err := updateExistingTableStructure(db, objectName, string(sqlContent)); err != nil {
+						log.Printf("[Seedey] Warning: Schema update failed for %s: %v", objectName, err)
+					}
+				} else {
+					log.Printf("[Seedey] %s '%s' exists. Skipping schema updates.", strings.Title(objectType), objectName)
+				}
 			}
 			break
 		}
@@ -231,18 +232,16 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 			}
 
 			if !exists {
-				log.Printf("[Seedey] Running seed script for %s %s from %s", objectType, objectName, sqlFilePath)
+				log.Printf("[Seedey] Running seed script for table %s from %s", objectName, sqlFilePath)
 				_, err := db.Exec(context.Background(), string(sqlContent))
 				if err != nil {
-					log.Printf("[Seedey] Error executing seed script for %s %s (%s): %v", objectType, objectName, file.Name(), err)
-				} else {
-					objectsToSeed = true
-					seededObjects = append(seededObjects, objectName)
-					log.Printf("[Seedey] Successfully seeded %s: %s", objectType, objectName)
+					return fmt.Errorf("[Seedey] Error executing seed script for users: %v", err)
 				}
 			} else {
-				skippedObjects = append(skippedObjects, objectName)
-				log.Printf("[Seedey] %s already exists, skipping seed: %s", objectType, objectName)
+				log.Printf("[Seedey] Table exists: %s. Checking for schema updates...", objectName)
+				if err := updateExistingTableStructure(db, objectName, string(sqlContent)); err != nil {
+					log.Printf("[Seedey] Warning: Schema update failed for %s: %v", objectName, err)
+				}
 			}
 		}
 	}
@@ -260,83 +259,18 @@ func Seedey(db *pgxpool.Pool, seedDir string) error {
 	return nil
 }
 
-func getObjectFromSQL(sqlContent string) (objectType string, objectName string) {
-	lines := strings.Split(sqlContent, "\n")
-	for _, line := range lines {
-		trimmedLine := strings.TrimSpace(line)
-		upperLine := strings.ToUpper(trimmedLine)
-
-		if strings.HasPrefix(trimmedLine, "--") || trimmedLine == "" {
-			continue
-		}
-
-		if strings.HasPrefix(upperLine, "CREATE TABLE") {
-			parts := strings.Fields(trimmedLine)
-			if len(parts) >= 3 {
-				name := parts[2]
-				name = strings.Trim(name, `"`)
-				if parts := strings.Split(name, "."); len(parts) > 1 {
-					name = parts[len(parts)-1]
-				}
-				name = strings.TrimSuffix(name, ";")
-				return "table", name
-			}
-		} else if strings.HasPrefix(upperLine, "CREATE TYPE") && strings.Contains(upperLine, "AS ENUM") {
-			parts := strings.Fields(trimmedLine)
-			if len(parts) >= 3 {
-				name := parts[2]
-				name = strings.Trim(name, `"`)
-				if parts := strings.Split(name, "."); len(parts) > 1 {
-					name = parts[len(parts)-1]
-				}
-				name = strings.TrimSuffix(name, ";")
-				return "enum", name
-			}
-		} else if strings.HasPrefix(upperLine, "CREATE UNIQUE INDEX") {
-			parts := strings.Fields(trimmedLine)
-			if len(parts) >= 4 && strings.ToUpper(parts[2]) == "INDEX" {
-				name := parts[3]
-				name = strings.Trim(name, `"`)
-				name = strings.TrimSuffix(name, ";")
-				return "index", name
-			} else if len(parts) >= 3 {
-				log.Printf("[Seedey] Warning: Complex CREATE INDEX statement in %s. Heuristic name extraction.", trimmedLine)
-				name := parts[2]
-				name = strings.Trim(name, `"`)
-				name = strings.TrimSuffix(name, ";")
-				if strings.ToUpper(parts[1]) == "UNIQUE" {
-					if len(parts) >= 4 {
-						name = parts[3]
-						name = strings.Trim(name, `"`)
-						name = strings.TrimSuffix(name, ";")
-					}
-				}
-				return "index", name
-			}
-		} else if strings.HasPrefix(upperLine, "CREATE INDEX") {
-			parts := strings.Fields(trimmedLine)
-			if len(parts) >= 3 {
-				name := parts[2]
-				name = strings.Trim(name, `"`)
-				name = strings.TrimSuffix(name, ";")
-				return "index", name
-			}
-		}
-	}
-	return "", ""
-}
-
 func backupDatabase(postgresURL, backupDir string) error {
 	if err := os.MkdirAll(backupDir, 0755); err != nil {
 		return fmt.Errorf("failed to create backup directory %s: %v", backupDir, err)
 	}
 
-	dateStr := time.Now().Format("2006-01-02")
-	fileName := fmt.Sprintf(backupFileNameFormat, dateStr)
+	// Format the date and time for the filename
+	datetimeStr := time.Now().Format("2006-01-02_15-04-05")
+	fileName := fmt.Sprintf("PGDBDUMP_SEEDY_%s.sql", datetimeStr)
 	backupFilePath := filepath.Join(backupDir, fileName)
 
 	if _, err := os.Stat(backupFilePath); err == nil {
-		log.Printf("[Harbinger] Backup file for today (%s) already exists: %s. Skipping backup.", dateStr, backupFilePath)
+		log.Printf("[Harbinger] Backup file for this timestamp (%s) already exists: %s. Skipping backup.", datetimeStr, backupFilePath)
 		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("error checking for existing backup file %s: %v", backupFilePath, err)
@@ -370,9 +304,231 @@ func backupDatabase(postgresURL, backupDir string) error {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if strings.Contains(err.Error(), "executable file not found") {
+			log.Printf("[Harbinger] Warning: pg_dump command failed: %v. Output:\n%s", err, string(output))
+			return nil // Ignore the error and continue
+		}
 		return fmt.Errorf("pg_dump command failed: %v. Output:\n%s", err, string(output))
 	}
 
 	log.Printf("[Harbinger] Successfully created backup: %s", backupFilePath)
 	return nil
+}
+
+func updateExistingTableStructure(db *pgxpool.Pool, tableName, sqlContent string) error {
+	type colInfo struct {
+		name     string
+		dataType string
+		nullable string
+		defValue *string
+	}
+	existingCols := make(map[string]colInfo)
+
+	// Fetch existing column info
+	rows, err := db.Query(context.Background(), `
+			SELECT column_name, data_type, is_nullable, column_default
+			FROM information_schema.columns
+			WHERE table_name = $1
+			ORDER BY ordinal_position`, tableName)
+	if err != nil {
+		return fmt.Errorf("failed to fetch schema: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var c colInfo
+		if err := rows.Scan(&c.name, &c.dataType, &c.nullable, &c.defValue); err != nil {
+			return fmt.Errorf("scan error: %w", err)
+		}
+		existingCols[c.name] = c
+	}
+
+	var pendingChecks []string
+	inTable := false
+
+	for _, rawLine := range strings.Split(sqlContent, "\n") {
+		line := strings.TrimSpace(rawLine)
+		upLine := strings.ToUpper(line)
+
+		if strings.HasPrefix(upLine, "CREATE TABLE") {
+			inTable = true
+			continue
+		}
+		if !inTable || line == "" || strings.HasPrefix(line, ")") {
+			continue
+		}
+
+		parts := strings.Fields(line)
+		if len(parts) < 2 {
+			continue
+		}
+
+		colName := strings.Trim(parts[0], `"`)
+		targetType := strings.ToLower(strings.TrimSuffix(parts[1], ","))
+		nullable := !strings.Contains(upLine, "NOT NULL")
+
+		// Parse DEFAULT and CHECK constraints
+		var defaultVal *string
+		if idx := strings.Index(upLine, "DEFAULT"); idx != -1 {
+			defaultPart := strings.Split(line[idx+7:], " ")[0]
+			defaultPart = strings.Trim(defaultPart, ",;")
+			if defaultPart != "" {
+				defaultVal = &defaultPart
+			}
+		}
+
+		// Handle CHECK constraints
+		if chkIdx := strings.Index(upLine, "CHECK"); chkIdx != -1 {
+			constraintBody := strings.TrimSpace(line[chkIdx+5:])
+			constraintBody = strings.TrimSuffix(constraintBody, ",")
+			constraintBody = strings.TrimSuffix(constraintBody, ";")
+			constraintName := fmt.Sprintf("%s_%s_check", tableName, colName)
+
+			// Check if the constraint already exists
+			exists, err := constraintExists(db, tableName, constraintName)
+			if err != nil {
+				return fmt.Errorf("failed to check constraint existence: %w", err)
+			}
+			if !exists {
+				pendingChecks = append(pendingChecks, fmt.Sprintf(
+					"ADD CONSTRAINT %s CHECK %s",
+					constraintName, constraintBody,
+				))
+			}
+		}
+
+		existing, exists := existingCols[colName]
+		if !exists {
+			continue
+		}
+
+		// Modify the type conversion block to handle jsonb
+		if existing.dataType != targetType {
+			if targetType == "uuid" || targetType == "jsonb" {
+				conversionSQL := fmt.Sprintf(`
+									DO $$
+									BEGIN
+											BEGIN
+													ALTER TABLE "%s" ALTER COLUMN "%s" TYPE %s USING "%s"::%s;
+											EXCEPTION WHEN others THEN
+													RAISE NOTICE 'Skipping %s conversion for %s.%s';
+											END;
+									END $$;`,
+					tableName, colName, targetType, colName, targetType,
+					targetType, tableName, colName)
+				if _, err := db.Exec(context.Background(), conversionSQL); err != nil {
+					return fmt.Errorf("%s conversion failed: %w", targetType, err)
+				}
+			} else {
+				alterSQL := fmt.Sprintf(
+					`ALTER TABLE "%s" ALTER COLUMN "%s" TYPE %s`,
+					tableName, colName, targetType,
+				)
+				if _, err := db.Exec(context.Background(), alterSQL); err != nil {
+					return fmt.Errorf("type change failed: %w", err)
+				}
+			}
+		}
+
+		// Nullability
+		if (existing.nullable == "YES" && !nullable) ||
+			(existing.nullable == "NO" && nullable) {
+			verb := "SET"
+			if nullable {
+				verb = "DROP"
+			}
+			alterSQL := fmt.Sprintf(
+				`ALTER TABLE "%s" ALTER COLUMN "%s" %s NOT NULL`,
+				tableName, colName, verb,
+			)
+			if _, err := db.Exec(context.Background(), alterSQL); err != nil {
+				return fmt.Errorf("nullability change failed: %w", err)
+			}
+		}
+
+		// Default values
+		if (defaultVal != nil && existing.defValue == nil) ||
+			(defaultVal != nil && *defaultVal != *existing.defValue) {
+			alterSQL := fmt.Sprintf(
+				`ALTER TABLE "%s" ALTER COLUMN "%s" SET DEFAULT %s`,
+				tableName, colName, *defaultVal,
+			)
+			if _, err := db.Exec(context.Background(), alterSQL); err != nil {
+				return fmt.Errorf("default change failed: %w", err)
+			}
+		}
+	}
+
+	// Apply pending CHECK constraints
+	if len(pendingChecks) > 0 {
+		alterSQL := fmt.Sprintf(
+			`ALTER TABLE "%s" %s`,
+			tableName, strings.Join(pendingChecks, ", "),
+		)
+		if _, err := db.Exec(context.Background(), alterSQL); err != nil {
+			return fmt.Errorf("check constraints failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func constraintExists(db *pgxpool.Pool, tableName, constraintName string) (bool, error) {
+	query := `SELECT EXISTS(SELECT 1 FROM information_schema.table_constraints WHERE table_name = $1 AND constraint_name = $2)`
+	var exists bool
+	err := db.QueryRow(context.Background(), query, tableName, constraintName).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func getObjectFromSQL(sqlContent string) (string, string) {
+	lines := strings.Split(sqlContent, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") || trimmed == "" {
+			continue
+		}
+
+		upper := strings.ToUpper(trimmed)
+		switch {
+		case strings.HasPrefix(upper, "CREATE TABLE"):
+			return extractTableName(trimmed)
+		case strings.HasPrefix(upper, "CREATE TYPE") && strings.Contains(upper, "ENUM"):
+			return extractTypeName(trimmed)
+		case strings.Contains(upper, "CREATE INDEX"):
+			return extractIndexName(trimmed)
+		}
+	}
+	return "", ""
+}
+
+func extractTableName(line string) (string, string) {
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return "", ""
+	}
+	name := strings.Trim(parts[2], `"`)
+	return "table", strings.TrimSuffix(name, ";")
+}
+
+func extractTypeName(line string) (string, string) {
+	parts := strings.Fields(line)
+	if len(parts) < 3 {
+		return "", ""
+	}
+	name := strings.Trim(parts[2], `"`)
+	return "enum", strings.TrimSuffix(name, ";")
+}
+
+func extractIndexName(line string) (string, string) {
+	parts := strings.Fields(line)
+	for i, p := range parts {
+		if strings.EqualFold(p, "INDEX") && i < len(parts)-1 {
+			name := strings.Trim(parts[i+1], `"`)
+			return "index", strings.TrimSuffix(name, ";")
+		}
+	}
+	return "", ""
 }
