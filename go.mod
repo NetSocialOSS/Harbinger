@@ -52,7 +52,7 @@ require (
 	github.com/google/uuid v1.6.0 // direct
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/lib/pq v1.10.9
-	github.com/redis/go-redis/v9 v9.7.1
+	github.com/redis/go-redis/v9 v9.7.3
 	golang.org/x/crypto v0.37.0
 	golang.org/x/text v0.24.0 // indirect
 )
