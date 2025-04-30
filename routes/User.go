@@ -137,7 +137,8 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.Error(w, "Error fetching user data", http.StatusInternalServerError)
+		http.Error(w, "Error fetching user data: "+err.Error(), http.StatusInternalServerError)
+
 		return
 	}
 
