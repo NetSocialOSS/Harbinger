@@ -2,6 +2,7 @@ package middlewares
 
 import (
 	"errors"
+	"fmt"
 	"net/smtp"
 	"netsocial/types"
 	"strconv"
@@ -35,8 +36,12 @@ func SetConfig(config types.Config) error {
 }
 
 func validateConfig(config types.Config) error {
-	if config.SMTP.Host == "" || config.SMTP.Port == 0 || config.SMTP.Username == "" || config.SMTP.Password == "" {
+	// Accept either username/password or access token for ms360
+	if config.SMTP.Host == "" || config.SMTP.Port == 0 {
 		return errors.New("invalid SMTP configuration")
+	}
+	if config.SMTP.AccessToken == "" && (config.SMTP.Username == "" || config.SMTP.Password == "") {
+		return errors.New("SMTP configuration must have either access token or username/password")
 	}
 	return nil
 }
@@ -48,11 +53,37 @@ func SendEmail(emailData EmailData) error {
 		return errors.New("SMTP configuration not set")
 	}
 
-	smtpAuth := smtp.PlainAuth("", globalConfig.SMTP.Username, globalConfig.SMTP.Password, globalConfig.SMTP.Host)
+	var smtpAuth smtp.Auth
+	if globalConfig.SMTP.AccessToken != "" {
+		// Use XOAUTH2 for ms360
+		smtpAuth = OAuth2Auth(globalConfig.SMTP.Username, globalConfig.SMTP.AccessToken)
+	} else {
+		smtpAuth = smtp.PlainAuth("", globalConfig.SMTP.Username, globalConfig.SMTP.Password, globalConfig.SMTP.Host)
+	}
 	msg := constructEmailMessage(emailData)
 	smtpServerAddress := globalConfig.SMTP.Host + ":" + strconv.Itoa(globalConfig.SMTP.Port)
 
 	return smtp.SendMail(smtpServerAddress, smtpAuth, emailData.From, []string{emailData.To}, []byte(msg))
+}
+
+// OAuth2Auth returns an smtp.Auth implementation for XOAUTH2 (ms360)
+func OAuth2Auth(username, accessToken string) smtp.Auth {
+	return &oauth2Auth{username, accessToken}
+}
+
+type oauth2Auth struct {
+	username    string
+	accessToken string
+}
+
+func (a *oauth2Auth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	// XOAUTH2 format: base64("user=<user>\x01auth=Bearer <token>\x01\x01")
+	authString := fmt.Sprintf("user=%s\x01auth=Bearer %s\x01\x01", a.username, a.accessToken)
+	return "XOAUTH2", []byte(authString), nil
+}
+
+func (a *oauth2Auth) Next(fromServer []byte, more bool) ([]byte, error) {
+	return nil, nil
 }
 
 func constructEmailMessage(emailData EmailData) string {
