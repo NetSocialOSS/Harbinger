@@ -1,21 +1,23 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
 	"net/http"
+	"netsocial/database"
 	"netsocial/middlewares"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 )
 
 // CheckCoterieChatAllowed checks if chat is allowed in the specified coterie.
 func CheckCoterieChatAllowed(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		db, ok := r.Context().Value("db").(*sql.DB)
+		db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 		if !ok {
 			http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 			return
@@ -28,12 +30,13 @@ func CheckCoterieChatAllowed(next http.Handler) http.Handler {
 		}
 
 		var isChatAllowed bool
-		err := db.QueryRow("SELECT `isChatAllowed` FROM coterie WHERE name = $1", coterieName).Scan(&isChatAllowed)
-		if err == sql.ErrNoRows {
-			http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
-			return
-		} else if err != nil {
-			http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
+		err := db.QueryRow(context.Background(), "select ischatalowed from coterie where name = $1", coterieName).Scan(&isChatAllowed)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				http.Error(w, `{"error": "Coterie not found"}`, http.StatusNotFound)
+			} else {
+				http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
+			}
 			return
 		}
 
@@ -48,35 +51,34 @@ func CheckCoterieChatAllowed(next http.Handler) http.Handler {
 
 // PostMessage allows a user to post a message in a coterie.
 func PostMessage(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
 	coterieName := r.URL.Query().Get("coterieName")
-	userIDStr := r.URL.Query().Get("userID")
 	content := r.URL.Query().Get("content")
 
-	if coterieName == "" || userIDStr == "" || content == "" {
+	if coterieName == "" || content == "" {
 		http.Error(w, `{"error": "Missing required fields: coterieName, userID, and content are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	userIDD, err := middlewares.DecryptAES(userIDStr)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	userID, err := uuid.Parse(userIDD)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
-		return
-	}
-
 	var memberExists bool
-	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM coterie WHERE name = $1 AND $2 = ANY(members))", coterieName, userID.String()).Scan(&memberExists)
+	err = db.QueryRow(context.Background(), "select exists (select 1 from coterie where name = $1 and $2 = any(members))", coterieName, userID).Scan(&memberExists)
 	if err != nil {
 		http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -94,8 +96,9 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = db.Exec(
-		"INSERT INTO messages (id, coterie, user_id, content, created_at) VALUES ($1, $2, $3, $4, $5)",
-		uuid.New().String(), coterieName, userID.String(), encryptedContent, time.Now(),
+		context.Background(),
+		"insert into messages (id, coterie, userid, content, createdat) values ($1, $2, $3, $4, $5)",
+		uuid.New().String(), coterieName, userID, encryptedContent, time.Now(),
 	)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to post message: `+err.Error()+`"}`, http.StatusInternalServerError)
@@ -108,34 +111,33 @@ func PostMessage(w http.ResponseWriter, r *http.Request) {
 
 // FetchMessages retrieves messages for a specific coterie.
 func FetchMessages(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 
 	coterieName := r.URL.Query().Get("coterieName")
-	userIDStr := r.URL.Query().Get("userID")
 
-	if coterieName == "" || userIDStr == "" {
+	if coterieName == "" {
 		http.Error(w, `{"error": "Missing required fields: coterieName and userID are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	userIDD, err := middlewares.DecryptAES(userIDStr)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	userID, err := middlewares.DecryptAES(encrypteduserId)
 	if err != nil {
 		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
-	userID, err := uuid.Parse(userIDD)
-	if err != nil {
-		http.Error(w, `{"error": "Invalid user ID format"}`, http.StatusBadRequest)
-		return
-	}
-
 	var memberExists bool
-	err = db.QueryRow("SELECT EXISTS (SELECT 1 FROM coterie WHERE name = $1 AND $2 = ANY(members))", coterieName, userID.String()).Scan(&memberExists)
+	err = db.QueryRow(context.Background(), "select exists (select 1 from coterie where name = $1 and $2 = any(members))", coterieName, userID).Scan(&memberExists)
 	if err != nil {
 		http.Error(w, `{"error": "Database error: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -146,7 +148,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := db.Query("SELECT content, created_at, user_id FROM messages WHERE coterie = $1 ORDER BY created_at DESC", coterieName)
+	rows, err := db.Query(context.Background(), "select content, createdat, user_id from messages where coterie = $1 order by createdat desc", coterieName)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to fetch messages: `+err.Error()+`"}`, http.StatusInternalServerError)
 		return
@@ -170,7 +172,7 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var username, profilePicture string
-		if err := db.QueryRow("SELECT username, profilepicture FROM users WHERE id = $1", userID).Scan(&username, &profilePicture); err != nil {
+		if err := db.QueryRow(context.Background(), "select username, profilepicture from users where id = $1", userID).Scan(&username, &profilePicture); err != nil {
 			http.Error(w, `{"error": "Error fetching user data: `+err.Error()+`"}`, http.StatusInternalServerError)
 			return
 		}
@@ -192,6 +194,6 @@ func FetchMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func HavokRoutes(r *chi.Mux) {
-	r.With(CheckCoterieChatAllowed).Post("/new/message", middlewares.DiscordErrorReport(http.HandlerFunc(PostMessage)).ServeHTTP)
-	r.With(CheckCoterieChatAllowed).Get("/messages/@all", middlewares.DiscordErrorReport(http.HandlerFunc(FetchMessages)).ServeHTTP)
+	r.With(CheckCoterieChatAllowed).Post("/new/message", PostMessage)
+	r.With(CheckCoterieChatAllowed).Get("/messages/@all", FetchMessages)
 }

@@ -7,101 +7,97 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os"
+	"io/ioutil"
+	"log"
 	"strings"
+
+	"netsocial/types"
+
+	"github.com/goccy/go-yaml"
 )
 
 const nonceSize = 12 // AES-GCM recommends 12-byte nonce
 
-// Function to retrieve the AES key from environment variables
-func getAESKey() ([]byte, error) {
-	key := os.Getenv("aeskey")
-	if len(key) != 32 { // AES-256 requires a 32-byte key
-		return nil, fmt.Errorf("AES key must be exactly 32 bytes, got %d bytes", len(key))
+// Configuration struct for storing AES key
+var configuration types.Config
+
+func init() {
+	configFile, err := ioutil.ReadFile("config.yaml")
+	if err != nil {
+		log.Fatalf("[Harbinger] Failed to read config file: %v", err)
 	}
-	return []byte(key), nil
+	err = yaml.UnmarshalWithOptions(configFile, &configuration, yaml.DisallowUnknownField())
+	if err != nil {
+		log.Fatalf("[Harbinger] Failed to parse config file: %v", err)
+	}
 }
 
-// EncryptAES function to encrypt a string using AES GCM encryption
+// EncryptAES encrypts a string using AES-GCM
 func EncryptAES(plaintext string) (string, error) {
-	aesKey, err := getAESKey() // Retrieve the AES key
-	if err != nil {
-		return "", fmt.Errorf("failed to get AES key: %w", err)
-	}
+	aesKey := []byte(configuration.AESKey)
 
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
-	// Generate a random nonce
-	nonce := make([]byte, nonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return "", fmt.Errorf("failed to generate nonce: %w", err)
+	// Generate a random nonce (12 bytes for AES-GCM)
+	nonce := make([]byte, 12)
+	_, err = rand.Read(nonce)
+	if err != nil {
+		return "", err
 	}
 
-	// Create a GCM cipher mode with the AES key and nonce
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Encrypt the data using AES-GCM
-	plaintextBytes := []byte(plaintext)
-	ciphertext := gcm.Seal(nil, nonce, plaintextBytes, nil)
+	// Encrypt the plaintext
+	ciphertext := gcm.Seal(nil, nonce, []byte(plaintext), nil)
 
-	// Encode the nonce and ciphertext in base64 and return
-	nonceBase64 := base64.URLEncoding.EncodeToString(nonce)
-	ciphertextBase64 := base64.URLEncoding.EncodeToString(ciphertext)
+	// Encode nonce and ciphertext in Base64
+	nonceBase64 := base64.StdEncoding.EncodeToString(nonce)
+	ciphertextBase64 := base64.StdEncoding.EncodeToString(ciphertext)
 
-	// Return the nonce and encrypted text in the format: nonce:ciphertext
+	// Return combined nonce and encrypted text
 	return nonceBase64 + ":" + ciphertextBase64, nil
 }
 
-// DecryptAES function to decrypt a string using AES GCM encryption
+// DecryptAES decrypts an AES-GCM encrypted string
 func DecryptAES(encryptedText string) (string, error) {
-	// Split the encrypted text to get the nonce and ciphertext
 	parts := strings.Split(encryptedText, ":")
 	if len(parts) != 2 {
 		return "", errors.New("invalid encrypted text format")
 	}
 
-	nonceBase64 := parts[0]
-	ciphertextBase64 := parts[1]
-
-	// Decode the base64 strings
-	nonce, err := base64.URLEncoding.DecodeString(nonceBase64)
+	nonce, err := base64.StdEncoding.DecodeString(parts[0])
 	if err != nil {
 		return "", fmt.Errorf("failed to decode nonce: %w", err)
 	}
 
-	ciphertext, err := base64.URLEncoding.DecodeString(ciphertextBase64)
+	ciphertext, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
-	aesKey, err := getAESKey() // Retrieve the AES key
-	if err != nil {
-		return "", fmt.Errorf("failed to get AES key: %w", err)
-	}
+	aesKey := []byte(configuration.AESKey)
 
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
 		return "", fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
-	// Create a GCM cipher mode with the AES key
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Decrypt the data using AES-GCM
+	// Decrypt the ciphertext
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to decrypt data: %w", err)
 	}
 
-	// Return the decrypted plaintext as a string
 	return string(plaintext), nil
 }

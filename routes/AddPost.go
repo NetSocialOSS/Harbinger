@@ -1,23 +1,25 @@
 package routes
 
 import (
-	"database/sql"
+	"context"
 	"encoding/json"
-	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/lib/pq"
 )
 
-func generateUniqueID(db *sql.DB) (string, error) {
+func generateUniqueID(db *pgxpool.Pool) (string, error) {
 	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	seededRand := rand.New(rand.NewSource(time.Now().UnixNano()))
 
@@ -30,7 +32,7 @@ func generateUniqueID(db *sql.DB) (string, error) {
 
 		// Check if the ID already exists in PostgreSQL
 		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM post WHERE id = $1", id).Scan(&count)
+		err := db.QueryRow(context.Background(), "select count(*) from post where id = $1", id).Scan(&count)
 		if err != nil {
 			return "", err
 		}
@@ -41,13 +43,13 @@ func generateUniqueID(db *sql.DB) (string, error) {
 }
 
 func AddPost(w http.ResponseWriter, r *http.Request) {
-	db := r.Context().Value("db").(*sql.DB)
+	db := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
+	var err error
 	if db == nil {
 		http.Error(w, "Database connection not available", http.StatusInternalServerError)
 		return
 	}
 
-	// Get input parameters
 	title := r.URL.Query().Get("title")
 	content := r.URL.Query().Get("content")
 	encryptedUserID := r.Header.Get("X-userID")
@@ -59,7 +61,6 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 	indexingStr := r.Header.Get("X-indexing")
 	indexing := false
 
-	// Parsing 'indexing' value
 	if indexingStr != "" {
 		if indexingStr == "true" {
 			indexing = true
@@ -71,14 +72,12 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Decrypt user ID
 	userID, err := middlewares.DecryptAES(encryptedUserID)
 	if err != nil {
 		http.Error(w, "Failed to decrypt user ID", http.StatusBadRequest)
 		return
 	}
 
-	// Validate options for polls
 	var validOptions []types.NewOptions
 	if optionsStr != "" {
 		options := strings.Split(optionsStr, ",")
@@ -98,22 +97,13 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check required fields
 	if title == "" || content == "" || userID == "" {
 		http.Error(w, "Title, content, and user ID are required", http.StatusBadRequest)
 		return
 	}
 
-	// Validate user ID
-	_, err = uuid.Parse(userID)
-	if err != nil {
-		http.Error(w, "Invalid user ID.", http.StatusBadRequest)
-		return
-	}
-
-	// Check if the user is banned
 	var isBanned bool
-	err = db.QueryRow("SELECT isBanned FROM users WHERE id = $1", userID).Scan(&isBanned)
+	err = db.QueryRow(context.Background(), "select isbanned from users where id = $1", userID).Scan(&isBanned)
 	if err != nil {
 		http.Error(w, "Failed to fetch user information", http.StatusInternalServerError)
 		return
@@ -124,10 +114,9 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the user is a member of the coterie (if provided)
 	if coterieName != "" {
 		var members []string
-		err = db.QueryRow("SELECT members FROM coterie WHERE name = $1", coterieName).Scan(pq.Array(&members))
+		err = db.QueryRow(context.Background(), "select members from coterie where name = $1", coterieName).Scan(pq.Array(&members))
 		if err != nil {
 			http.Error(w, "Failed to fetch coterie information", http.StatusInternalServerError)
 			return
@@ -147,14 +136,12 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Generate unique post ID
 	postID, err := generateUniqueID(db)
 	if err != nil {
 		http.Error(w, "Failed to generate unique post ID", http.StatusInternalServerError)
 		return
 	}
 
-	// Parse scheduled time
 	var scheduledFor *time.Time
 	if scheduledForStr != "" {
 		parsedTime, err := time.Parse(time.RFC3339, scheduledForStr)
@@ -165,7 +152,6 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 		scheduledFor = &parsedTime
 	}
 
-	// Handle poll creation
 	var pollJSON *string
 	if len(validOptions) > 0 {
 		poll := types.NewPoll{
@@ -174,7 +160,6 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: time.Now(),
 		}
 
-		// Decode expiration time if provided
 		if expirationStr != "" {
 			decodedExpirationStr, err := url.QueryUnescape(expirationStr)
 			if err != nil {
@@ -182,7 +167,6 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			// Parse the expiration time
 			expirationTime, err := time.Parse(time.RFC3339, decodedExpirationStr)
 			if err != nil {
 				http.Error(w, "Invalid expiration time", http.StatusBadRequest)
@@ -192,35 +176,63 @@ func AddPost(w http.ResponseWriter, r *http.Request) {
 			poll.Expiration = expirationTime
 		}
 
-		// Marshal poll to JSON
 		pollBytes, err := json.Marshal(poll)
 		if err != nil {
 			http.Error(w, "Failed to process poll options", http.StatusInternalServerError)
 			return
 		}
 
-		pollJSONStr := string(pollBytes)
-		pollJSON = &pollJSONStr
+		pollStr := string(pollBytes)
+		pollJSON = &pollStr
 	}
 
-	// Process images
 	var images []string
 	if image != "" {
 		images = strings.Split(image, ",")
 	}
 
-	// Insert new post into the database
 	query := `
-    INSERT INTO post (id, title, content, author, "isIndexed", createdAt, coterie, scheduledfor, image, poll, hearts)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+	insert into post (id, title, content, author, isindexed, coterie, scheduledfor, image, poll, hearts)
+	values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	returning createdat
 `
-	_, err = db.Exec(query, postID, title, content, userID, indexing, time.Now(), coterieName, scheduledFor, pq.Array(images), pollJSON, pq.Array([]string{}))
+	var createdAt time.Time
+	err = db.QueryRow(context.Background(), query,
+		postID,
+		title,
+		content,
+		userID,
+		indexing,
+		coterieName,
+		scheduledFor,
+		pq.Array(images),
+		pollJSON,
+		pq.Array([]string{}),
+	).Scan(&createdAt)
+
 	if err != nil {
 		http.Error(w, "Failed to create post", http.StatusInternalServerError)
+		log.Println(err)
 		return
 	}
 
-	// Respond with success
+	// Build debug response
+	postData := map[string]interface{}{
+		"id":           postID,
+		"title":        title,
+		"content":      content,
+		"author":       userID,
+		"isIndexed":    indexing,
+		"coterie":      coterieName,
+		"scheduledFor": scheduledFor,
+		"images":       images,
+		"poll":         pollJSON,
+		"hearts":       []string{},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	fmt.Fprintf(w, `{"message": "Post successfully created!", "postId": "%s"}`, postID)
+	if err := json.NewEncoder(w).Encode(postData); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }

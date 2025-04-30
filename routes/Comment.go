@@ -2,42 +2,43 @@ package routes
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
-	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v4"
+	"github.com/jackc/pgx/v4/pgxpool"
 
+	"netsocial/database"
 	"netsocial/middlewares"
 	"netsocial/types"
 )
 
-// AddComment adds a new comment to a post
 func AddComment(w http.ResponseWriter, r *http.Request) {
-	db, ok := r.Context().Value("db").(*sql.DB)
+	db, ok := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 	if !ok {
 		http.Error(w, `{"error": "Database connection not available"}`, http.StatusInternalServerError)
 		return
 	}
 	postID := r.Header.Get("X-id")
 	content := r.Header.Get("X-content")
-	encryptedauthorID := r.Header.Get("X-userID")
 
-	if postID == "" || content == "" || encryptedauthorID == "" {
+	if postID == "" || content == "" {
 		http.Error(w, `{"error": "Missing required query parameters"}`, http.StatusBadRequest)
 		return
 	}
 
-	authorID, err := middlewares.DecryptAES(encryptedauthorID)
-	if err != nil {
-		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
+	encrypteduserId := r.Header.Get("X-userID")
+	if encrypteduserId == "" {
+		http.Error(w, "userId query parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	if len(authorID) != 36 {
-		http.Error(w, `{"error": "Invalid author ID format"}`, http.StatusBadRequest)
+	authorID, err := middlewares.DecryptAES(encrypteduserId)
+	if err != nil {
+		http.Error(w, "Failed to decrypt userid", http.StatusBadRequest)
 		return
 	}
 
@@ -49,9 +50,9 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var author types.User
-	err = db.QueryRowContext(context.Background(), `SELECT id, isBanned FROM users WHERE id = $1`, authorID).Scan(&author.ID, &author.IsBanned)
+	err = db.QueryRow(context.Background(), `select id, isbanned from users where id = $1`, authorID).Scan(&author.ID, &author.IsBanned)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if err == pgx.ErrNoRows {
 			http.Error(w, `{"error": "Author not found"}`, http.StatusBadRequest)
 			return
 		}
@@ -72,9 +73,10 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 
 	// Retrieve the current comments for the post as raw JSON bytes
 	var currentCommentsBytes []byte
-	err = db.QueryRowContext(context.Background(), `SELECT comments FROM post WHERE id = $1`, postID).Scan(&currentCommentsBytes)
-	if err != nil && err != sql.ErrNoRows {
+	err = db.QueryRow(context.Background(), `select comments from post where id = $1`, postID).Scan(&currentCommentsBytes)
+	if err != nil && err != pgx.ErrNoRows {
 		http.Error(w, `{"error": "Failed to retrieve current comments"}`, http.StatusInternalServerError)
+		println(err.Error())
 		return
 	}
 
@@ -89,7 +91,7 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Append the new comment to the existing comments
-	currentComments = append(currentComments, commentJSON)
+	currentComments = append(currentComments, json.RawMessage(commentJSON))
 
 	// Update the post with the new comment
 	updatedCommentsJSON, err := json.Marshal(currentComments)
@@ -98,14 +100,36 @@ func AddComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.ExecContext(context.Background(), `
-		UPDATE post
-		SET comments = $1
-		WHERE id = $2
-	`, updatedCommentsJSON, postID)
+	_, err = db.Exec(context.Background(), `
+	update post
+	set comments = $1
+	where id = $2
+`, updatedCommentsJSON, postID)
 	if err != nil {
 		http.Error(w, `{"error": "Failed to add comment to post"}`, http.StatusInternalServerError)
 		return
+	}
+
+	var commenterDisplayName, authorId string
+	if err = db.QueryRow(r.Context(), "select displayname from users where id = $1", authorID).Scan(&commenterDisplayName); err != nil {
+		http.Error(w, "Error fetching display name", http.StatusInternalServerError)
+		return
+	}
+	if err = db.QueryRow(r.Context(), "select author from post where id = $1", postID).Scan(&authorId); err != nil {
+		http.Error(w, "Error fetching post author", http.StatusInternalServerError)
+		return
+	}
+
+	// Skip notification if the user is liking their own post
+	if authorID != authorId {
+		_, err = db.Exec(r.Context(),
+			"insert into notifications (userid, type, content, link) values ($1, $2, $3, $4)",
+			authorId, "like", fmt.Sprintf("you've received a comment on your post by %s!", commenterDisplayName), fmt.Sprintf("/post/%s", postID))
+		if err != nil {
+			http.Error(w, "Error creating like notification", http.StatusInternalServerError)
+			println(err)
+			return
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
