@@ -21,10 +21,20 @@ Harbinger is the core Go-written API for NetSocial’s backend services. It mana
 
 Harbinger consists of **one main process** and **three assistant processes**:
 
-- **Harbinger** – Manages API interactions, database logging, and environment-related logging.
-- **Gracey** – Handles service shutdowns and sequence-related tasks.
-- **Seedey** – Manages seeding processes (A seed is a .sql file that helps you automatically create tables in your database).
-- **Algor** – Drives feed recommendations and basic post moderation.
+- **Harbinger** – Manages API interactions, database logging, and environment-related logging. Handles configuration generation, OpenAPI documentation, and orchestrates all assistant processes.
+- **Gracey** – Handles graceful service shutdowns, OS signal handling, and sequence-related tasks to ensure safe termination and cleanup.
+- **Seedey** – Manages database seeding and migrations. Now also supports **database backup and restore** operations, making it easier to maintain and recover your data. Seedey can automatically detect and apply new `.sql` files, and provides warnings for complex SQL statements.
+- **Algor** – Drives feed recommendations and basic post moderation. Integrates with AI models (like Ollama) for content filtering, spam detection, and recommendation logic. Algor can fetch the currently running AI model and version, and supports toggling features like image filtering and mass mention detection.
+
+### Internal Functions & Features
+
+- **Automatic Configuration & OpenAPI Generation:** On first run, Harbinger generates a `config.yaml` and an `openapi.json` reflecting the current API structure.
+- **Dynamic Routing:** Uses the Chi router for modular route registration, including admin, user, notification, coterie, authentication, stats, blogs, and partner endpoints.
+- **Error Reporting:** Integrates with Discord webhooks for real-time error notifications, with sensitive data redaction.
+- **YAML/JSON Parsing:** Custom parsers for configuration and OpenAPI output, supporting nested structures and type reflection.
+- **Environment Checks:** In production mode, Harbinger checks server hardware and environment compatibility before starting.
+- **Database Object Detection:** Seedey can parse SQL files to identify tables, enums, and indexes, and now supports backup/restore for disaster recovery.
+- **AI Integration:** Algor can fetch and log the running AI model and version, and exposes toggles for enabling/disabling moderation features.
 
 ### Setup
 
@@ -32,6 +42,7 @@ Harbinger consists of **one main process** and **three assistant processes**:
 2. On the first run, it will generate a **config.yaml** and an **openapi.json**. Configure the configuration file; otherwise, it won't work.
 3. Ensure all **requirements** are met. If your environment is set to "production," it will check if your server meets the hardware requirements to host Harbinger.
 4. Ensure the database is **seeded** correctly. Although Seedey is good at its job, it might doze off sometimes, so double-check!
+5. For backup and restore, use Seedey's new commands to create and load database backups as needed.
 
 ## Contribution Guidelines
 
