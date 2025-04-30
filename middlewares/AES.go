@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"strings"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/goccy/go-yaml"
 )
+
+const nonceSize = 12 // AES-GCM recommends 12-byte nonce
 
 // Configuration struct for storing AES key
 var configuration types.Config
@@ -35,7 +38,7 @@ func EncryptAES(plaintext string) (string, error) {
 
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
 	// Generate a random nonce (12 bytes for AES-GCM)
@@ -47,7 +50,7 @@ func EncryptAES(plaintext string) (string, error) {
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
 	// Encrypt the plaintext
@@ -70,30 +73,30 @@ func DecryptAES(encryptedText string) (string, error) {
 
 	nonce, err := base64.StdEncoding.DecodeString(parts[0])
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to decode nonce: %w", err)
 	}
 
 	ciphertext, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to decode ciphertext: %w", err)
 	}
 
 	aesKey := []byte(configuration.AESKey)
 
 	block, err := aes.NewCipher(aesKey)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create new cipher: %w", err)
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to create GCM: %w", err)
 	}
 
 	// Decrypt the ciphertext
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to decrypt data: %w", err)
 	}
 
 	return string(plaintext), nil
