@@ -120,7 +120,7 @@ type NewComment struct {
 }
 
 type Comment struct {
-	ID             uuid.UUID `json:"ID"`
+	ID             string    `json:"ID"`
 	Author         string    `json:"Author"`
 	Content        string    `json:"Content"`
 	CreatedAt      time.Time `json:"CreatedAt"`
