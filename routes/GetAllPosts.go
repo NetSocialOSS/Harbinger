@@ -11,6 +11,7 @@ import (
 	"netsocial/types"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgtype"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"github.com/karlseguin/ccache/v2"
 )
@@ -57,18 +58,16 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Check if posts are already cached
-	cachedPosts := postCache.Get("all_posts")
-	if cachedPosts != nil {
+	if cachedPosts := postCache.Get("all_posts"); cachedPosts != nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(cachedPosts.Value())
 		return
 	}
 
-	query := `select id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
-			from post
-			where isIndexed = true
-			order by createdat desc`
+	query := `SELECT id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
+			FROM post
+			WHERE isIndexed = true
+			ORDER BY createdat DESC`
 
 	rows, err := db.Query(ctx, query)
 	if err != nil {
@@ -79,9 +78,10 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 
 	var posts []types.Post
 	for rows.Next() {
+		var post types.Post
 		var commentsJSON []byte
 		var pollJSON *string
-		var scheduledFor *time.Time
+		var scheduledFor pgtype.Timestamptz
 
 		err := rows.Scan(
 			&post.ID, &post.Title, &post.Content, &post.Author, &post.Coterie, &scheduledFor,
@@ -93,32 +93,22 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if scheduledFor != nil {
-			post.ScheduledFor = *scheduledFor
-		} else {
-			post.ScheduledFor = time.Time{}
-		}
+		post.ScheduledFor = scheduledFor
 
 		if err := json.Unmarshal(commentsJSON, &post.Comments); err != nil {
 			post.Comments = nil
 		}
 
-		// Handle the poll
 		if pollJSON != nil {
 			var decodedPoll []types.Poll
-			err := json.Unmarshal([]byte(*pollJSON), &decodedPoll)
-
-			// If unmarshalling into a slice fails, try unmarshalling into a single Poll object
-			if err != nil {
+			if err := json.Unmarshal([]byte(*pollJSON), &decodedPoll); err != nil {
 				var singlePoll types.Poll
 				if err := json.Unmarshal([]byte(*pollJSON), &singlePoll); err != nil {
 					http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
 					return
 				}
-				// Convert single poll to a slice
 				decodedPoll = append(decodedPoll, singlePoll)
 			}
-
 			post.Poll = decodedPoll
 		}
 
@@ -126,29 +116,35 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var visiblePosts []map[string]interface{}
-	now := time.Now()
+	now := time.Now().UTC()
 	for _, post := range posts {
 		if !post.Indexing {
 			continue
 		}
 
-		cachedAuthor := userCache.Get(post.Author)
-		if cachedAuthor != nil {
+		var author types.Author
+		if cachedAuthor := userCache.Get(post.Author); cachedAuthor != nil {
 			author = cachedAuthor.Value().(types.Author)
 		} else {
-			authorQuery := `select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator, ispartner
-				from users where id = $1`
+			authorQuery := `SELECT username, isverified, isorganisation, profilebanner, profilepicture, 
+							isdeveloper, isowner, ismoderator, ispartner, isprivate
+							FROM users WHERE id = $1`
 			err := db.QueryRow(ctx, authorQuery, post.Author).Scan(
-				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
-				&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
+				&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner,
+				&author.ProfilePicture, &author.IsDeveloper, &author.IsOwner,
+				&author.IsModerator, &author.IsPartner, &author.IsPrivate,
 			)
 			if err != nil {
 				continue
 			}
-			userCache.Set(post.Author, author, time.Minute*3)
+			userCache.Set(post.Author, author, 3*time.Minute)
 		}
 
 		if author.IsPrivate {
+			continue
+		}
+
+		if post.ScheduledFor.Valid && post.ScheduledFor.Time.After(now) {
 			continue
 		}
 
@@ -166,10 +162,6 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
-			continue
-		}
-
 		var heartsDetails []string
 		for _, heart := range post.Hearts {
 			userID, err := uuid.Parse(heart)
@@ -177,21 +169,20 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			cachedauthor := userCache.Get(userID.String())
-			if cachedauthor == nil {
-
-				err := db.QueryRow(ctx, `select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator, ispartner from users where id = $1`, userID.String()).Scan(
-					&author.Username, &author.IsVerified, &author.IsOrganisation, &author.ProfileBanner, &author.ProfilePicture,
-					&author.IsDeveloper, &author.IsOwner, &author.IsModerator, &author.IsPartner,
-				)
+			if cachedAuthor := userCache.Get(userID.String()); cachedAuthor != nil {
+				author := cachedAuthor.Value().(types.Author)
+				heartsDetails = append(heartsDetails, author.Username)
+			} else {
+				var heartAuthor types.Author
+				err := db.QueryRow(ctx,
+					`SELECT username FROM users WHERE id = $1`,
+					userID.String(),
+				).Scan(&heartAuthor.Username)
 				if err != nil {
 					continue
 				}
-				heartsDetails = append(heartsDetails, author.Username)
-				userCache.Set(userID.String(), author, time.Minute*3)
-			} else {
-				cachedAuthor := cachedauthor.Value().(types.Author)
-				heartsDetails = append(heartsDetails, cachedAuthor.Username)
+				heartsDetails = append(heartsDetails, heartAuthor.Username)
+				userCache.Set(userID.String(), heartAuthor, 3*time.Minute)
 			}
 		}
 
@@ -216,14 +207,14 @@ func GetAllPosts(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		if !post.ScheduledFor.IsZero() {
-			postResponse["scheduledFor"] = post.ScheduledFor
+		if post.ScheduledFor.Valid && !post.ScheduledFor.Time.IsZero() {
+			postResponse["scheduledFor"] = post.ScheduledFor.Time
 		}
 
 		visiblePosts = append(visiblePosts, postResponse)
 	}
 
-	postCache.Set("all_posts", visiblePosts, time.Minute*3)
+	postCache.Set("all_posts", visiblePosts, 3*time.Minute)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(visiblePosts)

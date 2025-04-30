@@ -74,9 +74,18 @@ func GetPostById(w http.ResponseWriter, r *http.Request) {
 
 	// Assign the scheduledFor time if it's not NULL
 	if scheduledFor != nil {
-		post.ScheduledFor = *scheduledFor
+		err = post.ScheduledFor.Scan(*scheduledFor)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to scan scheduledFor time: %v", err), http.StatusInternalServerError)
+			return
+		}
 	} else {
-		post.ScheduledFor = time.Time{}
+		// Set to an empty time value
+		err = post.ScheduledFor.Scan(time.Time{})
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to scan empty time: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	// Handle the nullable coterie field

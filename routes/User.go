@@ -11,7 +11,6 @@ import (
 	"netsocial/middlewares"
 	"netsocial/types"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -96,7 +95,6 @@ func SendGoodbyeEmail(email string) error {
 }
 
 func GetUserByName(w http.ResponseWriter, r *http.Request) {
-	// Retrieve the pgx pool from the request context.
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	usernameParam := chi.URLParam(r, "username")
@@ -109,7 +107,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 
 	var user types.User
 
-	// Query the user using pgxpool.QueryRow.
 	err := dbPool.QueryRow(r.Context(), `
         select id, username, displayname, bio, isverified, isorganisation, isdeveloper, isowner,
                isbanned, ispartner, ismoderator, profilepicture, profilebanner, followers,
@@ -123,12 +120,10 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		&user.Links, &user.IsPrivate, &user.IsPrivateHearts,
 	)
 	if err != nil {
-		// Use pgx's ErrNoRows constant
 		if err == pgx.ErrNoRows || err.Error() == "no rows in result set" {
 			http.Error(w, "User not found", http.StatusNotFound)
 			return
 		}
-		// Check for context errors.
 		if errors.Is(err, context.Canceled) {
 			http.Error(w, "Request was canceled", http.StatusRequestTimeout)
 			return
@@ -138,11 +133,9 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		}
 
 		http.Error(w, "Error fetching user data: "+err.Error(), http.StatusInternalServerError)
-
 		return
 	}
 
-	// If the user’s profile is private, return limited information.
 	if user.IsPrivate {
 		response := map[string]interface{}{
 			"username":       user.Username,
@@ -157,7 +150,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build the base response.
 	response := map[string]interface{}{
 		"username":       user.Username,
 		"displayname":    user.DisplayName,
@@ -177,7 +169,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		"followingCount": len(user.Following),
 	}
 
-	// Cache for resolving user IDs to usernames.
 	userIDToUsername := make(map[uuid.UUID]string)
 	getUsername := func(id uuid.UUID) (string, error) {
 		if username, found := userIDToUsername[id]; found {
@@ -188,7 +179,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		query := `select username from users where id = $1`
 		err := dbPool.QueryRow(r.Context(), query, id).Scan(&resolvedUsername)
 		if err != nil {
-			// If no row is found, return a default value.
 			if err.Error() == "no rows in result set" {
 				return "Unknown User", nil
 			}
@@ -199,7 +189,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return resolvedUsername, nil
 	}
 
-	// Handle the "info" action by returning more detailed information.
 	if action == "info" {
 		infoResponse := map[string]interface{}{
 			"username":       user.Username,
@@ -222,11 +211,9 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Function to process a post and its associated author data.
 	processPost := func(post types.Post, author types.Author) (map[string]interface{}, error) {
 		var hearts []string
 		for _, heartIDStr := range post.Hearts {
-			// Parse the heart ID (stored as string) to uuid.UUID.
 			id, err := uuid.Parse(heartIDStr)
 			if err != nil {
 				return nil, fmt.Errorf("error parsing heart ID: %v", err)
@@ -239,7 +226,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			hearts = append(hearts, username)
 		}
 
-		// If the post includes a poll, update vote counts.
 		if post.Poll != nil {
 			totalVotes := 0
 			for i := range post.Poll {
@@ -247,7 +233,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 					optionVoteCount := len(post.Poll[i].Options[j].Votes)
 					totalVotes += optionVoteCount
 
-					// Remove the slice of votes and add a vote count.
 					post.Poll[i].Options[j].Votes = nil
 					post.Poll[i].Options[j].VoteCount = optionVoteCount
 				}
@@ -279,9 +264,7 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	}
 
-	// Handle "followers" or "following" actions.
 	if action == "followers" || action == "following" {
-		// If the account is private, do not expose the list.
 		if user.IsPrivate {
 			response["message"] = "This account is private"
 			json.NewEncoder(w).Encode(response)
@@ -325,7 +308,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Query posts that are indexed (isIndexed = true) for this user.
 	var posts []map[string]interface{}
 	rows, err := dbPool.Query(r.Context(), `
 		select id, title, content, author, coterie, scheduledfor, image, poll, createdat, hearts, comments, isIndexed
@@ -356,18 +338,15 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Handle scheduledFor.
 		if scheduledFor.Status == pgtype.Present {
-			post.ScheduledFor = scheduledFor.Time
+			post.ScheduledFor.Set(scheduledFor.Time)
 		} else {
-			post.ScheduledFor = time.Time{}
+			post.ScheduledFor.Status = pgtype.Null
 		}
 
-		// Handle the poll JSON.
 		if pollJSON.Status == pgtype.Present {
 			var decodedPoll []types.Poll
 			if err := json.Unmarshal([]byte(pollJSON.String), &decodedPoll); err != nil {
-				// If unmarshalling into a slice fails, try unmarshalling into a single Poll object.
 				var singlePoll types.Poll
 				if err := json.Unmarshal([]byte(pollJSON.String), &singlePoll); err != nil {
 					http.Error(w, fmt.Sprintf("Failed to decode poll: %v", err), http.StatusInternalServerError)
@@ -378,14 +357,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			post.Poll = decodedPoll
 		}
 
-		// Handle scheduledFor.
-		if scheduledFor.Status == pgtype.Present {
-			post.ScheduledFor = scheduledFor.Time
-		} else {
-			post.ScheduledFor = time.Time{}
-		}
-
-		// Decode comments.
 		if commentsJSON.Status == pgtype.Present {
 			var commentList []types.Comment
 			if err := json.Unmarshal([]byte(commentsJSON.String), &commentList); err != nil {
@@ -397,7 +368,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 			post.Comments = []types.Comment{}
 		}
 
-		// Retrieve the author details for the post.
 		var author types.Author
 		err = dbPool.QueryRow(r.Context(), `
 				select username, isverified, isorganisation, profilebanner, profilepicture, isdeveloper, isowner, ismoderator
@@ -419,7 +389,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		posts = append(posts, postData)
 	}
 
-	// Handle "hearts" action (hearted posts).
 	if action == "hearts" {
 		if user.IsPrivateHearts {
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -450,7 +419,6 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Error decoding post data", http.StatusInternalServerError)
 				return
 			}
-			// Process the poll data.
 			if err := json.Unmarshal(pollJSON, &post.Poll); err != nil {
 				http.Error(w, "Error decoding poll data", http.StatusInternalServerError)
 				return
@@ -483,13 +451,11 @@ func GetUserByName(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the posts along with the base user response.
 	response["posts"] = posts
 	json.NewEncoder(w).Encode(response)
 }
 
 func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
-	// Get the database connection pool from the context
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	encrypteduserId := r.Header.Get("X-userID")
@@ -503,11 +469,9 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare update fields
 	var displayName, bio, profilePicture, profileBanner *string
 	var links []string
 
-	// Check for the presence of query parameters and decode them if present
 	if value := r.URL.Query().Get("displayName"); value != "" {
 		decoded, err := url.QueryUnescape(value)
 		if err == nil {
@@ -539,7 +503,6 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Perform the update operation with pgxpool
 	query := `
 		update users
 		set
@@ -551,23 +514,20 @@ func UpdateProfileSettings(w http.ResponseWriter, r *http.Request) {
 		where id = $6`
 	_, err = dbPool.Exec(r.Context(), query, displayName, bio, profilePicture, profileBanner, links, userID)
 	if err != nil {
-		// If there's an error executing the query, respond with an error message
 		http.Error(w, "Failed to update user profile: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Send success response
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "Profile settings updated successfully!",
 	})
 }
 
 func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
-	// Get the database connection pool from the context
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	username := r.URL.Query().Get("username")
-	action := r.URL.Query().Get("action") // This could be either "follow" or "unfollow"
+	action := r.URL.Query().Get("action")
 
 	encrypteduserId := r.Header.Get("X-userID")
 	if encrypteduserId == "" {
@@ -580,7 +540,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the user to be followed or unfollowed
 	var userToBeUpdated struct {
 		ID        string         `json:"id"`
 		Followers pq.StringArray `json:"followers"`
@@ -595,7 +554,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch the follower's following list
 	var followerUser struct {
 		ID        string         `json:"id"`
 		Following pq.StringArray `json:"following"`
@@ -610,7 +568,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if the follower is banned
 	var isBanned bool
 	err = dbPool.QueryRow(r.Context(), "select isbanned from users where id = $1", followerID).Scan(&isBanned)
 	if err != nil {
@@ -622,13 +579,11 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prevent following oneself
 	if userToBeUpdated.ID == followerUser.ID {
 		http.Error(w, "You can't follow yourself!", http.StatusBadRequest)
 		return
 	}
 
-	// Initialize followers and following if they are nil
 	if userToBeUpdated.Followers == nil {
 		userToBeUpdated.Followers = pq.StringArray{}
 	}
@@ -636,7 +591,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		followerUser.Following = pq.StringArray{}
 	}
 
-	// Check if the user is already following the target user
 	isAlreadyFollowing := false
 	for _, follower := range userToBeUpdated.Followers {
 		if follower == followerID {
@@ -645,7 +599,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Handle follow/unfollow logic
 	if action == "follow" && isAlreadyFollowing {
 		http.Error(w, fmt.Sprintf("You are already following %s", username), http.StatusBadRequest)
 		return
@@ -656,7 +609,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prepare new lists for followers and following
 	var updateFollowers pq.StringArray
 	var updateFollowing pq.StringArray
 
@@ -671,14 +623,12 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update followers for the target user
 	_, err = dbPool.Exec(r.Context(), "update users set followers = $1 where id = $2", pq.Array(updateFollowers), userToBeUpdated.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating followers list for user %s: %v", username, err), http.StatusInternalServerError)
 		return
 	}
 
-	// Update following for the follower
 	_, err = dbPool.Exec(r.Context(), "update users set following = $1 where id = $2", pq.Array(updateFollowing), followerUser.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error updating following list for user %s: %v", username, err), http.StatusInternalServerError)
@@ -702,7 +652,6 @@ func FollowOrUnfollowUser(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Respond with success
 	actionMessage := "followed"
 	if action == "unfollow" {
 		actionMessage = "unfollowed"
@@ -722,7 +671,6 @@ func removeFromArray(arr pq.StringArray, value string) pq.StringArray {
 }
 
 func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
-	// Get the database connection pool from the context
 	dbPool := r.Context().Value(database.DBContextKey).(*pgxpool.Pool)
 
 	encryptedUserID := r.Header.Get("X-userID")
@@ -743,7 +691,6 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 
 	switch action {
 	case "togglePrivateHearts":
-		// Retrieve current privacy setting for private hearts
 		err := dbPool.QueryRow(r.Context(), `select "isPrivateHearts" from users where id = $1`, userID).Scan(&currentPrivacy)
 		if err != nil {
 			if err == pgx.ErrNoRows {
@@ -754,17 +701,14 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Toggle the privacy setting
 		newPrivacySetting := !currentPrivacy
 
-		// Update the privacy setting in the database
 		_, err = dbPool.Exec(r.Context(), `update users set "isPrivateHearts" = $1 where id = $2`, newPrivacySetting, userID)
 		if err != nil {
 			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
 			return
 		}
 
-		// Respond with success
 		w.WriteHeader(http.StatusOK)
 		response := map[string]interface{}{
 			"message":            "Privacy setting updated successfully",
@@ -773,7 +717,6 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(response)
 
 	case "togglePrivateAccount":
-		// Retrieve current privacy setting for private account
 		err := dbPool.QueryRow(r.Context(), `select isprivate from users where id = $1`, userID).Scan(&currentPrivacy)
 		if err != nil {
 			if err == pgx.ErrNoRows {
@@ -784,17 +727,14 @@ func TogglePrivacy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Toggle the privacy setting
 		newPrivacySetting := !currentPrivacy
 
-		// Update the privacy setting in the database
 		_, err = dbPool.Exec(r.Context(), `update users set isprivate = $1 where id = $2`, newPrivacySetting, userID)
 		if err != nil {
 			http.Error(w, "Failed to update privacy setting", http.StatusInternalServerError)
 			return
 		}
 
-		// Respond with success
 		w.WriteHeader(http.StatusOK)
 		response := map[string]interface{}{
 			"message":      "Privacy setting updated successfully",

@@ -255,7 +255,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer rows.Close()
-		var scheduledFor pgtype.Timestamp
+		var scheduledFor pgtype.Timestamptz
 		var pollJSON *json.RawMessage
 		var commentsJSON pgtype.Text
 
@@ -286,10 +286,12 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if scheduledFor.Status == pgtype.Present {
-				post.ScheduledFor = scheduledFor.Time
-			} else {
-				post.ScheduledFor = time.Time{} // Default zero value for time.Time
+			var now = time.Now()
+
+			if post.ScheduledFor.Status == pgtype.Present &&
+				!post.ScheduledFor.Time.IsZero() &&
+				post.ScheduledFor.Time.After(now) {
+				continue
 			}
 
 			var author types.User
@@ -329,7 +331,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			now := time.Now()
+			now = time.Now()
 			if scheduledFor.Status == pgtype.Present && !post.ScheduledFor.IsZero() && post.ScheduledFor.After(now) {
 				continue
 			}
