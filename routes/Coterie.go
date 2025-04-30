@@ -123,7 +123,7 @@ func GetCoterieByName(w http.ResponseWriter, r *http.Request) {
 	var rolesJSON []byte
 
 	err := db.QueryRow(context.Background(), `
-	select id, name, description, members, owner, createdat, banner, avatar, ischatalowed, isverified, isorganisation, roles, bannedmembers
+	select id, name, description, members, owner, createdat, banner, avatar, ischatallowed, isverified, isorganisation, roles, bannedmembers
 	from coterie where name ilike $1
 `, coterieName).Scan(
 		&coterie.ID,
