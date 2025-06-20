@@ -5,7 +5,7 @@ go 1.23.0
 toolchain go1.23.8
 
 require (
-	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-chi/cors v1.2.1
 	github.com/goccy/go-yaml v1.15.17
 	github.com/gocolly/colly/v2 v2.2.0
