@@ -1,8 +1,6 @@
 module netsocial
 
-go 1.23.0
-
-toolchain go1.23.8
+go 1.24.0
 
 require (
 	github.com/go-chi/chi/v5 v5.1.0
@@ -43,7 +41,7 @@ require (
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/temoto/robotstxt v1.1.2 // indirect
-	golang.org/x/net v0.39.0 // indirect
+	golang.org/x/net v0.47.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 )
@@ -53,6 +51,6 @@ require (
 	github.com/jackc/pgx/v4 v4.18.3
 	github.com/lib/pq v1.10.9
 	github.com/redis/go-redis/v9 v9.7.3
-	golang.org/x/crypto v0.37.0
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/crypto v0.45.0
+	golang.org/x/text v0.31.0 // indirect
 )
